@@ -8,17 +8,23 @@
 
 using System;
 using System.Collections.Generic;
-using System.Runtime.InteropServices;
 
 namespace usbrelay
 {
     class UsbRelayWrapper
     {
         private string target_serial { get; set; }
+        private readonly RelayService relayService;
 
         public UsbRelayWrapper(string serial)
+            : this(serial, new RelayService(new NativeUsbRelayBackend()))
+        {
+        }
+
+        public UsbRelayWrapper(string serial, RelayService relayService)
         {
             target_serial = serial;
+            this.relayService = relayService;
         }
         ~UsbRelayWrapper() { }
 
@@ -34,64 +40,54 @@ namespace usbrelay
 
         public void on_off_channels(HashSet<int> on_channels, HashSet<int> off_channels)
         {
-            int device_handle = open_device_handle(target_serial);
-            if (device_handle == 0)
-                Console.WriteLine(String.Format("ERROR: failed to open device {0}.", target_serial));
-
             foreach (int i in on_channels)
             {
-                int retval = UsbRelayDeviceHelper.OpenOneRelayChannel(device_handle, i);
-                Console.WriteLine(String.Format("Turn on channel {0} on {1}: {2}", i, target_serial, on_off_channel_msg(retval)));
+                Console.WriteLine(String.Format("Turn on channel {0} on {1}: {2}", i, target_serial, run_channel_operation(i, true)));
             }
             foreach (int i in off_channels)
             {
-                int retval = UsbRelayDeviceHelper.CloseOneRelayChannel(device_handle, i);
-                Console.WriteLine(String.Format("Turn off channel {0} on {1}: {2}", i, target_serial, on_off_channel_msg(retval)));
+                Console.WriteLine(String.Format("Turn off channel {0} on {1}: {2}", i, target_serial, run_channel_operation(i, false)));
             }
-
-            UsbRelayDeviceHelper.Close(device_handle);
 
             Console.WriteLine();
             status();
         }
 
-        private string on_off_channel_msg(int status)
+        private string run_channel_operation(int channel, bool on)
         {
-            switch (status)
+            try
             {
-                case 0: return "success";
-                case 1: return "error";
-                case 2: return "index exceeds the channel number range of the usb relay device";
-                default: return "unknown error";
+                if (on)
+                    relayService.TurnOn(target_serial, channel);
+                else
+                    relayService.TurnOff(target_serial, channel);
+                return "success";
+            }
+            catch (Exception ex)
+            {
+                return ex.Message;
             }
         }
 
         public void list()
         {
-            UsbRelayDeviceHelper.UsbRelayDeviceInfo usb_relay_it = null;
-            usb_relay_it = UsbRelayDeviceHelper.Enumerate();
-
-            if (usb_relay_it != null)
+            var devices = relayService.EnumerateDevices();
+            if (devices.Count > 0)
             {
                 Console.WriteLine("Serial    Type");
                 Console.WriteLine("------    ----");
             }
-            while (usb_relay_it != null)
+
+            foreach (var device in devices)
             {
-                Console.WriteLine(String.Format("{0}     {1}", usb_relay_it.SerialNumber, usb_relay_it.Type));
-                IntPtr next_it = usb_relay_it.Next;
-                usb_relay_it = (UsbRelayDeviceHelper.UsbRelayDeviceInfo)Marshal.PtrToStructure(
-                    next_it, 
-                    typeof(UsbRelayDeviceHelper.UsbRelayDeviceInfo));
+                Console.WriteLine(String.Format("{0}     {1}", device.SerialNumber, device.Type));
             }
         }
 
         public void status()
         {
-            UsbRelayDeviceHelper.UsbRelayDeviceInfo usb_relay_it = null;
-            usb_relay_it = UsbRelayDeviceHelper.Enumerate();
-
-            if (usb_relay_it != null)
+            var devices = relayService.EnumerateDevices();
+            if (devices.Count > 0)
             {
                 Console.Write("Serial  ");
                 for (int channel = 1; channel <= 8; channel++) Console.Write(String.Format(" C{0}  ", channel));
@@ -101,35 +97,19 @@ namespace usbrelay
                 Console.WriteLine();
             }
 
-            while (usb_relay_it != null)
+            foreach (var device in devices)
             {
-                string serial = usb_relay_it.SerialNumber;
+                string serial = device.SerialNumber;
                 Console.Write(String.Format("{0}   ", serial));
 
-                int channels = Convert.ToInt32(usb_relay_it.Type);
-                int device_handle = open_device_handle(serial);
-                if (device_handle == 0)
-                    Console.WriteLine("ERROR: failed to open device.");
-
-                int status = 0;
-                if (UsbRelayDeviceHelper.GetStatus(device_handle, ref status) != 0)
-                    Console.WriteLine("ERROR: failed to retrieve channel status.");
-                else
+                for (int channel = 1; channel <= device.ChannelCount; channel++)
                 {
-                    for (int channel = 1; channel <= channels; channel++)
-                        if ((status & (1 << (channel - 1))) > 0)
-                            Console.Write("ON   ");
-                        else
-                            Console.Write("OFF  ");
-                    Console.WriteLine();
+                    if (device.IsChannelOn(channel))
+                        Console.Write("ON   ");
+                    else
+                        Console.Write("OFF  ");
                 }
-
-                UsbRelayDeviceHelper.Close(device_handle);
-                
-                IntPtr next_it = usb_relay_it.Next;
-                usb_relay_it = (UsbRelayDeviceHelper.UsbRelayDeviceInfo)Marshal.PtrToStructure(
-                    next_it, 
-                    typeof(UsbRelayDeviceHelper.UsbRelayDeviceInfo));
+                Console.WriteLine();
             }
         }
 

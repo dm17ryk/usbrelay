@@ -8,6 +8,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
 
 namespace usbrelay
 {
@@ -15,10 +17,14 @@ namespace usbrelay
     {
         enum Operations { NULL, LIST, STATUS, ONOFF };
 
+        [STAThread]
         static void Main(string[] args)
         {
-            if (args.Length < 1) {
-                usage();
+            if (args.Length == 0 || (args.Length == 1 && string.Equals(args[0], "-gui", StringComparison.OrdinalIgnoreCase))) {
+                FreeConsole();
+                Application.EnableVisualStyles();
+                Application.SetCompatibleTextRenderingDefault(false);
+                Application.Run(new MainForm());
             }
             else {
                 // command line data
@@ -132,6 +138,9 @@ namespace usbrelay
             }
             return false;
         }
+
+        [DllImport("kernel32.dll")]
+        private static extern bool FreeConsole();
 
     }
 }
