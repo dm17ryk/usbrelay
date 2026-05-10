@@ -1,0 +1,20 @@
+<svg width="1920" height="1080" viewBox="0 0 1920 1080" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1920" y2="1080" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#090D16"/><stop offset="1" stop-color="#1F2C3F"/>
+    </linearGradient>
+    <radialGradient id="red" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(340 230) scale(840)">
+      <stop stop-color="#F5363D" stop-opacity=".45"/><stop offset="1" stop-color="#F5363D" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="green" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1660 820) scale(760)">
+      <stop stop-color="#32D791" stop-opacity=".35"/><stop offset="1" stop-color="#32D791" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#bg)"/>
+  <rect width="1920" height="1080" fill="url(#red)"/>
+  <rect width="1920" height="1080" fill="url(#green)"/>
+  <text x="230" y="565" font-family="DejaVu Sans, Arial, sans-serif" font-size="94" font-weight="700" fill="white">UsbRelay</text>
+  <text x="232" y="630" font-family="DejaVu Sans, Arial, sans-serif" font-size="34" fill="#DAE6F2" opacity=".82">Control USB relay boards</text>
+  <rect x="232" y="720" width="500" height="14" rx="7" fill="white" opacity=".18"/>
+  <rect x="232" y="720" width="340" height="14" rx="7" fill="white" opacity=".82"/>
+</svg>

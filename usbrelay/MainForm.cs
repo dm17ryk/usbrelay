@@ -13,37 +13,58 @@ namespace usbrelay
         private readonly IRelayBackend relayBackend;
         private readonly RelayService relayService;
         private readonly SequenceRepository sequenceRepository;
+        private readonly string layoutSettingsPath;
         private readonly SequenceResourceLocks resourceLocks = new SequenceResourceLocks();
-        private readonly ToolTip toolTip = new ToolTip();
-        private readonly Dictionary<SequenceDefinition, Button> runButtons = new Dictionary<SequenceDefinition, Button>();
         private readonly List<SequenceDefinition> sequences = new List<SequenceDefinition>();
 
-        private FlowLayoutPanel sequenceListPanel;
+        private DataGridView sequenceGrid;
         private FlowLayoutPanel devicesPanel;
         private SplitContainer splitContainer;
+        private TableLayoutPanel sequencePaneLayout;
+        private TableLayoutPanel devicePaneLayout;
         private TextBox logTextBox;
         private TextBox statusTextBox;
         private SequenceDefinition selectedSequence;
         private bool defaultSplitterApplied;
 
         public MainForm()
-            : this(new NativeUsbRelayBackend(), new SequenceRepository(SequenceRepository.DefaultPath))
+            : this(new NativeUsbRelayBackend(), new SequenceRepository(SequenceRepository.DefaultPath), MainLayoutSettings.DefaultPath)
         {
         }
 
         public MainForm(IRelayBackend relayBackend, SequenceRepository sequenceRepository)
+            : this(relayBackend, sequenceRepository, null)
+        {
+        }
+
+        public MainForm(IRelayBackend relayBackend, SequenceRepository sequenceRepository, string layoutSettingsPath)
         {
             this.relayBackend = relayBackend;
             this.relayService = new RelayService(relayBackend);
             this.sequenceRepository = sequenceRepository;
+            this.layoutSettingsPath = layoutSettingsPath;
             InitializeComponent();
         }
 
         protected override void OnLoad(EventArgs e)
         {
             base.OnLoad(e);
+            LoadLayoutSettings();
             LoadSequences();
             RefreshDevices();
+        }
+
+        protected override void OnShown(EventArgs e)
+        {
+            base.OnShown(e);
+            ApplyDefaultSplitterDistance();
+            ResizeDeviceRows();
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            SaveLayoutSettings();
+            base.OnFormClosing(e);
         }
 
         private void InitializeComponent()
@@ -64,56 +85,53 @@ namespace usbrelay
             splitContainer.Panel1.Controls.Add(CreateSequencePane());
             splitContainer.Panel2.Controls.Add(CreateDevicePane());
             Controls.Add(splitContainer);
-            Resize += (s, e) => ResizeDynamicRows();
-        }
-
-        protected override void OnShown(EventArgs e)
-        {
-            base.OnShown(e);
-            ApplyDefaultSplitterDistance();
-            ResizeDynamicRows();
-        }
-
-        private void ApplyDefaultSplitterDistance()
-        {
-            if (defaultSplitterApplied || splitContainer.Width <= 0)
-                return;
-
-            splitContainer.SplitterDistance = Math.Max(splitContainer.Panel1MinSize, (int)(splitContainer.Width * 0.4));
-            defaultSplitterApplied = true;
+            Resize += (s, e) => ResizeDeviceRows();
         }
 
         private Control CreateSequencePane()
         {
-            var root = new TableLayoutPanel
+            sequencePaneLayout = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
                 RowCount = 4,
                 Padding = new Padding(8)
             };
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 42));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 58));
+            sequencePaneLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            sequencePaneLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 42));
+            sequencePaneLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            sequencePaneLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 58));
 
             var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
             toolbar.Controls.Add(MiniButton("Add", (s, e) => AddSequence()));
             toolbar.Controls.Add(MiniButton("Edit", (s, e) => EditSequence()));
             toolbar.Controls.Add(MiniButton("Remove", (s, e) => RemoveSequence()));
-            root.Controls.Add(toolbar, 0, 0);
+            sequencePaneLayout.Controls.Add(toolbar, 0, 0);
 
-            sequenceListPanel = new FlowLayoutPanel
+            sequenceGrid = new DataGridView
             {
                 Dock = DockStyle.Fill,
-                AutoScroll = true,
-                FlowDirection = FlowDirection.TopDown,
-                WrapContents = false
+                AllowUserToAddRows = false,
+                AllowUserToDeleteRows = false,
+                AllowUserToResizeRows = false,
+                AutoGenerateColumns = false,
+                ColumnHeadersVisible = false,
+                MultiSelect = false,
+                ReadOnly = true,
+                RowHeadersVisible = false,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                ScrollBars = ScrollBars.Vertical,
+                BackgroundColor = SystemColors.Window,
+                BorderStyle = BorderStyle.FixedSingle
             };
-            sequenceListPanel.SizeChanged += (s, e) => ResizeSequenceRows();
-            root.Controls.Add(sequenceListPanel, 0, 1);
+            sequenceGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "NameColumn", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
+            sequenceGrid.Columns.Add(new DataGridViewButtonColumn { Name = "RunColumn", Width = 86, UseColumnTextForButtonValue = false });
+            sequenceGrid.CellClick += SequenceGrid_CellClick;
+            sequenceGrid.SelectionChanged += (s, e) => SelectGridSequence();
+            sequenceGrid.CellToolTipTextNeeded += SequenceGrid_CellToolTipTextNeeded;
+            sequencePaneLayout.Controls.Add(sequenceGrid, 0, 1);
 
-            root.Controls.Add(new Label { Text = "Sequence log", AutoSize = true, Margin = new Padding(0, 8, 0, 4) }, 0, 2);
+            sequencePaneLayout.Controls.Add(new Label { Text = "Sequence log", AutoSize = true, Margin = new Padding(0, 8, 0, 4) }, 0, 2);
             logTextBox = new TextBox
             {
                 Dock = DockStyle.Fill,
@@ -124,30 +142,30 @@ namespace usbrelay
                 ForeColor = Color.WhiteSmoke,
                 Font = new Font("Consolas", 9F)
             };
-            root.Controls.Add(logTextBox, 0, 3);
+            sequencePaneLayout.Controls.Add(logTextBox, 0, 3);
 
-            return root;
+            return sequencePaneLayout;
         }
 
         private Control CreateDevicePane()
         {
-            var root = new TableLayoutPanel
+            devicePaneLayout = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
                 RowCount = 4,
                 Padding = new Padding(8)
             };
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 62));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 38));
+            devicePaneLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            devicePaneLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 62));
+            devicePaneLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            devicePaneLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 38));
 
             var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
             toolbar.Controls.Add(MiniButton("Refresh", (s, e) => RefreshDevices()));
             toolbar.Controls.Add(MiniButton("All Off", (s, e) => AllOff()));
             toolbar.Controls.Add(new Label { Text = "Discovered on load, refreshable", AutoSize = true, Padding = new Padding(6, 6, 0, 0) });
-            root.Controls.Add(toolbar, 0, 0);
+            devicePaneLayout.Controls.Add(toolbar, 0, 0);
 
             devicesPanel = new FlowLayoutPanel
             {
@@ -157,9 +175,9 @@ namespace usbrelay
                 WrapContents = false
             };
             devicesPanel.SizeChanged += (s, e) => ResizeDeviceRows();
-            root.Controls.Add(devicesPanel, 0, 1);
+            devicePaneLayout.Controls.Add(devicesPanel, 0, 1);
 
-            root.Controls.Add(new Label { Text = "Device and channel status", AutoSize = true, Margin = new Padding(0, 8, 0, 4) }, 0, 2);
+            devicePaneLayout.Controls.Add(new Label { Text = "Device and channel status", AutoSize = true, Margin = new Padding(0, 8, 0, 4) }, 0, 2);
             statusTextBox = new TextBox
             {
                 Dock = DockStyle.Fill,
@@ -168,9 +186,9 @@ namespace usbrelay
                 ScrollBars = ScrollBars.Vertical,
                 Font = new Font("Consolas", 9F)
             };
-            root.Controls.Add(statusTextBox, 0, 3);
+            devicePaneLayout.Controls.Add(statusTextBox, 0, 3);
 
-            return root;
+            return devicePaneLayout;
         }
 
         private Button MiniButton(string text, EventHandler click)
@@ -187,6 +205,15 @@ namespace usbrelay
             return button;
         }
 
+        private void ApplyDefaultSplitterDistance()
+        {
+            if (defaultSplitterApplied || splitContainer.Width <= 0 || splitContainer.SplitterDistance > 0)
+                return;
+
+            splitContainer.SplitterDistance = Math.Max(splitContainer.Panel1MinSize, (int)(splitContainer.Width * 0.4));
+            defaultSplitterApplied = true;
+        }
+
         private void LoadSequences()
         {
             sequences.Clear();
@@ -201,53 +228,52 @@ namespace usbrelay
 
         private void RenderSequences()
         {
-            sequenceListPanel.Controls.Clear();
-            runButtons.Clear();
+            sequenceGrid.Rows.Clear();
 
             foreach (var sequence in sequences)
             {
-                var row = new Panel
-                {
-                    Height = 34,
-                    Width = SequenceRowWidth(),
-                    BorderStyle = BorderStyle.FixedSingle,
-                    Margin = new Padding(0, 2, 0, 2),
-                    BackColor = ReferenceEquals(sequence, selectedSequence) ? Color.FromArgb(232, 240, 254) : Color.White
-                };
-                row.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top;
-                row.Click += (s, e) => SelectSequence(sequence);
-                toolTip.SetToolTip(row, sequence.Description ?? string.Empty);
-
-                var nameButton = MiniButton(sequence.Name, (s, e) => SelectSequence(sequence));
-                nameButton.TextAlign = ContentAlignment.MiddleLeft;
-                nameButton.UseVisualStyleBackColor = false;
-                nameButton.BackColor = row.BackColor;
-                nameButton.FlatStyle = FlatStyle.Flat;
-                nameButton.FlatAppearance.BorderSize = 0;
-                nameButton.AutoSize = false;
-                nameButton.Height = 28;
-                nameButton.Name = "sequenceNameButton";
-                toolTip.SetToolTip(nameButton, sequence.Description ?? string.Empty);
-
-                var run = MiniButton(sequence.DisplayRunButtonText, (s, e) => RunSequence(sequence));
-                run.Name = "sequenceRunButton";
-                run.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-                runButtons[sequence] = run;
-
-                row.Controls.Add(nameButton);
-                row.Controls.Add(run);
-                LayoutSequenceRow(row);
-                sequenceListPanel.Controls.Add(row);
+                int rowIndex = sequenceGrid.Rows.Add(sequence.Name, sequence.DisplayRunButtonText);
+                var row = sequenceGrid.Rows[rowIndex];
+                row.Tag = sequence;
+                row.Height = 28;
+                foreach (DataGridViewCell cell in row.Cells)
+                    cell.ToolTipText = sequence.Description ?? string.Empty;
+                if (ReferenceEquals(sequence, selectedSequence))
+                    row.Selected = true;
             }
 
-            ResizeSequenceRows();
             UpdateBusyState();
         }
 
-        private void SelectSequence(SequenceDefinition sequence)
+        private void SelectGridSequence()
         {
+            if (sequenceGrid.SelectedRows.Count == 0)
+                return;
+
+            selectedSequence = sequenceGrid.SelectedRows[0].Tag as SequenceDefinition;
+        }
+
+        private void SequenceGrid_CellClick(object sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex < 0 || e.RowIndex >= sequenceGrid.Rows.Count)
+                return;
+
+            var sequence = sequenceGrid.Rows[e.RowIndex].Tag as SequenceDefinition;
+            if (sequence == null)
+                return;
+
             selectedSequence = sequence;
-            RenderSequences();
+            if (sequenceGrid.Columns[e.ColumnIndex].Name == "RunColumn" && !sequenceGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].ReadOnly)
+                RunSequence(sequence);
+        }
+
+        private void SequenceGrid_CellToolTipTextNeeded(object sender, DataGridViewCellToolTipTextNeededEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.RowIndex >= sequenceGrid.Rows.Count)
+                return;
+
+            var sequence = sequenceGrid.Rows[e.RowIndex].Tag as SequenceDefinition;
+            e.ToolTipText = sequence?.Description ?? string.Empty;
         }
 
         private void AddSequence()
@@ -399,33 +425,6 @@ namespace usbrelay
             return group;
         }
 
-        private void ResizeDynamicRows()
-        {
-            ResizeSequenceRows();
-            ResizeDeviceRows();
-        }
-
-        private void ResizeSequenceRows()
-        {
-            foreach (Control row in sequenceListPanel.Controls)
-            {
-                row.Width = SequenceRowWidth();
-                LayoutSequenceRow(row);
-            }
-        }
-
-        private void LayoutSequenceRow(Control row)
-        {
-            Control nameButton = row.Controls["sequenceNameButton"];
-            Control runButton = row.Controls["sequenceRunButton"];
-            if (nameButton == null || runButton == null)
-                return;
-
-            runButton.Location = new Point(row.Width - runButton.Width - 4, 3);
-            nameButton.Location = new Point(3, 3);
-            nameButton.Width = Math.Max(40, runButton.Left - 6);
-        }
-
         private void ResizeDeviceRows()
         {
             foreach (Control row in devicesPanel.Controls)
@@ -445,11 +444,6 @@ namespace usbrelay
             int perRow = Math.Max(1, usableWidth / 68);
             int rows = Math.Max(1, (int)Math.Ceiling(channelCount / (double)perRow));
             row.Height = 38 + (rows * 48);
-        }
-
-        private int SequenceRowWidth()
-        {
-            return Math.Max(140, sequenceListPanel.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 4);
         }
 
         private int DeviceRowWidth()
@@ -486,10 +480,14 @@ namespace usbrelay
 
         private void UpdateBusyState()
         {
-            foreach (var pair in runButtons)
+            foreach (DataGridViewRow row in sequenceGrid.Rows)
             {
-                var parsed = SequenceParser.Parse(pair.Key.Script);
-                pair.Value.Enabled = parsed.IsValid && parsed.Resources.All(resource => !resourceLocks.IsBusy(resource));
+                var sequence = row.Tag as SequenceDefinition;
+                if (sequence == null)
+                    continue;
+
+                var parsed = SequenceParser.Parse(sequence.Script);
+                row.Cells["RunColumn"].ReadOnly = !parsed.IsValid || parsed.Resources.Any(resource => resourceLocks.IsBusy(resource));
             }
 
             foreach (Control group in devicesPanel.Controls)
@@ -503,6 +501,79 @@ namespace usbrelay
                     }
                 }
             }
+        }
+
+        private void LoadLayoutSettings()
+        {
+            if (string.IsNullOrEmpty(layoutSettingsPath))
+                return;
+
+            MainLayoutSettings settings;
+            try
+            {
+                settings = MainLayoutSettings.Load(layoutSettingsPath);
+            }
+            catch
+            {
+                return;
+            }
+
+            if (settings == null)
+                return;
+
+            StartPosition = FormStartPosition.Manual;
+            if (settings.Width >= MinimumSize.Width && settings.Height >= MinimumSize.Height)
+                SetBounds(settings.Left, settings.Top, settings.Width, settings.Height);
+
+            if (settings.MainSplitterDistance > 0 && splitContainer.Width > 0)
+            {
+                splitContainer.SplitterDistance = Math.Min(settings.MainSplitterDistance, Math.Max(splitContainer.Panel1MinSize, splitContainer.Width - splitContainer.Panel2MinSize));
+                defaultSplitterApplied = true;
+            }
+
+            ApplyPanePercents(sequencePaneLayout, settings.SequenceListPercent, 42);
+            ApplyPanePercents(devicePaneLayout, settings.DeviceListPercent, 62);
+
+            if (settings.WindowState != FormWindowState.Minimized)
+                WindowState = settings.WindowState;
+        }
+
+        private void SaveLayoutSettings()
+        {
+            if (string.IsNullOrEmpty(layoutSettingsPath))
+                return;
+
+            var bounds = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
+            var settings = new MainLayoutSettings
+            {
+                Left = bounds.Left,
+                Top = bounds.Top,
+                Width = bounds.Width,
+                Height = bounds.Height,
+                WindowState = WindowState,
+                MainSplitterDistance = splitContainer.SplitterDistance,
+                SequenceListPercent = GetPanePercent(sequencePaneLayout, 42),
+                DeviceListPercent = GetPanePercent(devicePaneLayout, 62)
+            };
+            settings.Save(layoutSettingsPath);
+        }
+
+        private static void ApplyPanePercents(TableLayoutPanel layout, int primaryPercent, int defaultPercent)
+        {
+            int percent = primaryPercent > 0 && primaryPercent < 100 ? primaryPercent : defaultPercent;
+            layout.RowStyles[1].SizeType = SizeType.Percent;
+            layout.RowStyles[1].Height = percent;
+            layout.RowStyles[3].SizeType = SizeType.Percent;
+            layout.RowStyles[3].Height = 100 - percent;
+        }
+
+        private static int GetPanePercent(TableLayoutPanel layout, int defaultPercent)
+        {
+            float total = layout.RowStyles[1].Height + layout.RowStyles[3].Height;
+            if (total <= 0)
+                return defaultPercent;
+
+            return (int)Math.Round((layout.RowStyles[1].Height / total) * 100);
         }
 
         private void AppendLog(string message)

@@ -19,7 +19,9 @@ namespace usbrelay.Tests
                 SequenceParser_ParsesDslAndResources,
                 SequenceResourceLocks_BlockOverlappingChannelsOnly,
                 SequenceRunner_ExecutesRegexSuccessBranchWithFakeRelayAndTool,
-                MainForm_LoadsSavedSequencesIntoVisibleRows
+                MainForm_LoadsSavedSequencesIntoVisibleRows,
+                MainLayoutSettings_RoundTripsWindowAndPaneSizes,
+                MainForm_SavesLayoutSettings
             };
 
             foreach (var test in tests)
@@ -126,12 +128,60 @@ namespace usbrelay.Tests
                 repository))
             {
                 InvokePrivate(form, "LoadSequences");
-                var sequenceList = (FlowLayoutPanel)GetPrivateField(form, "sequenceListPanel");
+                var sequenceList = (DataGridView)GetPrivateField(form, "sequenceGrid");
 
-                AssertEqual(1, sequenceList.Controls.Count, "Visible sequence row count");
-                AssertTrue(sequenceList.Controls[0].Controls["sequenceNameButton"].Text == "Visible sequence", "Sequence name button should be visible");
-                AssertTrue(sequenceList.Controls[0].Controls["sequenceRunButton"].Text == "Run", "Sequence run button should be visible");
+                AssertEqual(1, sequenceList.Rows.Count, "Visible sequence row count");
+                AssertEqual("Visible sequence", sequenceList.Rows[0].Cells["NameColumn"].Value, "Sequence name should be visible");
+                AssertEqual("Run", sequenceList.Rows[0].Cells["RunColumn"].Value, "Sequence run button should be visible");
             }
+        }
+
+        private static void MainLayoutSettings_RoundTripsWindowAndPaneSizes()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "layout.json");
+            var original = new MainLayoutSettings
+            {
+                Left = 10,
+                Top = 20,
+                Width = 900,
+                Height = 700,
+                WindowState = FormWindowState.Normal,
+                MainSplitterDistance = 360,
+                SequenceListPercent = 45,
+                DeviceListPercent = 65
+            };
+
+            original.Save(path);
+            var loaded = MainLayoutSettings.Load(path);
+
+            AssertEqual(original.Left, loaded.Left, "Left");
+            AssertEqual(original.Top, loaded.Top, "Top");
+            AssertEqual(original.Width, loaded.Width, "Width");
+            AssertEqual(original.Height, loaded.Height, "Height");
+            AssertEqual(original.MainSplitterDistance, loaded.MainSplitterDistance, "MainSplitterDistance");
+            AssertEqual(original.SequenceListPercent, loaded.SequenceListPercent, "SequenceListPercent");
+            AssertEqual(original.DeviceListPercent, loaded.DeviceListPercent, "DeviceListPercent");
+        }
+
+        private static void MainForm_SavesLayoutSettings()
+        {
+            string sequencePath = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "sequences.json");
+            string layoutPath = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "layout.json");
+
+            using (var form = new MainForm(
+                new FakeRelayBackend(new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0)),
+                new SequenceRepository(sequencePath),
+                layoutPath))
+            {
+                form.SetBounds(20, 30, 900, 650);
+                InvokePrivate(form, "SaveLayoutSettings");
+            }
+
+            var loaded = MainLayoutSettings.Load(layoutPath);
+            AssertEqual(20, loaded.Left, "Saved Left");
+            AssertEqual(30, loaded.Top, "Saved Top");
+            AssertEqual(900, loaded.Width, "Saved Width");
+            AssertEqual(650, loaded.Height, "Saved Height");
         }
 
         private static void InvokePrivate(object instance, string methodName)
