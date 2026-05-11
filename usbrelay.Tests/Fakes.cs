@@ -22,8 +22,11 @@ namespace usbrelay.Tests
 
         public IReadOnlyList<RelayDevice> EnumerateDevices()
         {
+            EnumerateDevicesCallCount++;
             return devices.Values.Select(CloneWithState).ToList();
         }
+
+        public int EnumerateDevicesCallCount { get; private set; }
 
         public RelayDevice GetDevice(string serialNumber)
         {

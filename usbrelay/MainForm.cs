@@ -15,6 +15,7 @@ namespace usbrelay
         private readonly SequenceRepository sequenceRepository;
         private readonly string layoutSettingsPath;
         private readonly SequenceResourceLocks resourceLocks = new SequenceResourceLocks();
+        private readonly SequenceParseCache sequenceParseCache = new SequenceParseCache();
         private readonly List<SequenceDefinition> sequences = new List<SequenceDefinition>();
 
         private DataGridView sequenceGrid;
@@ -243,6 +244,7 @@ namespace usbrelay
         private void RenderSequences()
         {
             sequenceGrid.Rows.Clear();
+            sequenceParseCache.Retain(sequences);
 
             foreach (var sequence in sequences)
             {
@@ -335,7 +337,7 @@ namespace usbrelay
 
         private async void RunSequence(SequenceDefinition sequence)
         {
-            var parsed = SequenceParser.Parse(sequence.Script);
+            var parsed = sequenceParseCache.Get(sequence);
             if (!parsed.IsValid)
             {
                 AppendLog(sequence.Name + " validation failed: " + string.Join("; ", parsed.Diagnostics));
@@ -465,7 +467,7 @@ namespace usbrelay
             return Math.Max(260, devicesPanel.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 4);
         }
 
-        private void ToggleChannel(string serialNumber, int channel, bool on)
+        private void ToggleChannel(string serialNumber, int channel, bool on, bool refreshDevices = true)
         {
             var resource = new RelayResource(serialNumber, channel);
             if (resourceLocks.IsBusy(resource))
@@ -475,7 +477,8 @@ namespace usbrelay
             {
                 relayBackend.SetChannel(serialNumber, channel, on);
                 AppendLog(serialNumber + " CH" + channel + " -> " + (on ? "ON" : "OFF") + " ok");
-                RefreshDevices();
+                if (refreshDevices)
+                    RefreshDevices();
             }
             catch (Exception ex)
             {
@@ -488,8 +491,10 @@ namespace usbrelay
             foreach (var device in relayService.EnumerateDevices())
             {
                 for (int channel = 1; channel <= device.ChannelCount; channel++)
-                    ToggleChannel(device.SerialNumber, channel, false);
+                    ToggleChannel(device.SerialNumber, channel, false, refreshDevices: false);
             }
+
+            RefreshDevices();
         }
 
         private void UpdateBusyState()
@@ -500,7 +505,7 @@ namespace usbrelay
                 if (sequence == null)
                     continue;
 
-                var parsed = SequenceParser.Parse(sequence.Script);
+                var parsed = sequenceParseCache.Get(sequence);
                 bool busy = parsed.Resources.Any(resource => resourceLocks.IsBusy(resource));
                 row.Cells["RunColumn"].Value = !parsed.IsValid ? "Invalid" : busy ? "Busy" : sequence.DisplayRunButtonText;
                 row.Cells["RunColumn"].Style.ForeColor = !parsed.IsValid || busy ? SystemColors.GrayText : SystemColors.ControlText;

@@ -201,6 +201,7 @@
       <DependentUpon>Resources.resx</DependentUpon>
     </Compile>
     <Compile Include="AppAssets.cs" />
+    <Compile Include="ConsoleWindow.cs" />
     <Compile Include="IRelayBackend.cs" />
     <Compile Include="MainLayoutSettings.cs" />
     <Compile Include="MainForm.cs" />
@@ -218,6 +219,7 @@
     <Compile Include="Sequences\SequenceActions.cs" />
     <Compile Include="Sequences\SequenceDefinition.cs" />
     <Compile Include="Sequences\SequenceExecution.cs" />
+    <Compile Include="Sequences\SequenceParseCache.cs" />
     <Compile Include="Sequences\SequenceParser.cs" />
     <Compile Include="Sequences\SequenceParseResult.cs" />
     <Compile Include="Sequences\SequenceRepository.cs" />

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Text;
 
 namespace usbrelay.Sequences
 {
@@ -94,11 +95,31 @@ namespace usbrelay.Sequences
                 UseShellExecute = false
             };
 
-            using (var process = Process.Start(startInfo))
+            var output = new StringBuilder();
+            object outputLock = new object();
+
+            using (var process = new Process { StartInfo = startInfo })
             {
-                string output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
+                process.OutputDataReceived += (sender, e) => AppendOutput(output, outputLock, e.Data);
+                process.ErrorDataReceived += (sender, e) => AppendOutput(output, outputLock, e.Data);
+
+                process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
                 process.WaitForExit();
-                return new ExternalToolResult(process.ExitCode, output);
+
+                return new ExternalToolResult(process.ExitCode, output.ToString());
+            }
+        }
+
+        private static void AppendOutput(StringBuilder output, object outputLock, string line)
+        {
+            if (line == null)
+                return;
+
+            lock (outputLock)
+            {
+                output.AppendLine(line);
             }
         }
     }

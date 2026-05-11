@@ -8,7 +8,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace usbrelay
@@ -21,10 +20,7 @@ namespace usbrelay
         static void Main(string[] args)
         {
             if (args.Length == 0 || (args.Length == 1 && string.Equals(args[0], "-gui", StringComparison.OrdinalIgnoreCase))) {
-                IntPtr consoleWindow = GetConsoleWindow();
-                if (consoleWindow != IntPtr.Zero)
-                    ShowWindow(consoleWindow, SW_HIDE);
-                FreeConsole();
+                ConsoleWindow.HideForGui();
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
                 MainForm mainForm;
@@ -152,17 +148,6 @@ namespace usbrelay
             }
             return false;
         }
-
-        [DllImport("kernel32.dll")]
-        private static extern bool FreeConsole();
-
-        [DllImport("kernel32.dll")]
-        private static extern IntPtr GetConsoleWindow();
-
-        [DllImport("user32.dll")]
-        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-
-        private const int SW_HIDE = 0;
 
     }
 }

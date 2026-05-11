@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using usbrelay.Sequences;
 
@@ -13,14 +15,24 @@ namespace usbrelay.Tests
         [STAThread]
         private static int Main()
         {
+            if (Environment.GetCommandLineArgs().Contains("--write-large-stderr"))
+            {
+                Console.Error.Write(new string('e', 256 * 1024));
+                Console.Out.WriteLine("stdout-done");
+                return 0;
+            }
+
             var tests = new Action[]
             {
                 SequenceRepository_RoundTripsSequencesAsJson,
                 SequenceParser_ParsesDslAndResources,
+                SequenceParseCache_ReusesParseUntilScriptChanges,
                 SequenceResourceLocks_BlockOverlappingChannelsOnly,
                 SequenceRunner_ExecutesRegexSuccessBranchWithFakeRelayAndTool,
+                ProcessExternalToolRunner_DoesNotDeadlockWhenStderrPipeFills,
                 MainForm_LoadsSavedSequencesIntoVisibleRows,
                 MainForm_RunButtonClickExecutesVisibleSequence,
+                MainForm_AllOffRefreshesDevicesOnceAfterChannelUpdates,
                 MainLayoutSettings_RoundTripsWindowAndPaneSizes,
                 MainForm_SavesLayoutSettings,
                 SequenceEditorLayoutSettings_RoundTripsWindowAndSplitter,
@@ -74,6 +86,29 @@ namespace usbrelay.Tests
             AssertTrue(result.Resources.Contains(new RelayResource("6QMBS", 1)), "CH1 resource should be claimed");
         }
 
+        private static void SequenceParseCache_ReusesParseUntilScriptChanges()
+        {
+            int parseCount = 0;
+            var cache = new SequenceParseCache(script =>
+            {
+                parseCount++;
+                return SequenceParser.Parse(script);
+            });
+            var sequence = new SequenceDefinition { Script = "sequence.PowerOff(\"6QMBS\", 1);" };
+
+            var first = cache.Get(sequence);
+            var second = cache.Get(sequence);
+
+            AssertTrue(object.ReferenceEquals(first, second), "Parse result should be reused while script is unchanged");
+            AssertEqual(1, parseCount, "Parser call count before script change");
+
+            sequence.Script = "sequence.PowerOff(\"6QMBS\", 2);";
+            var third = cache.Get(sequence);
+
+            AssertFalse(object.ReferenceEquals(first, third), "Parse result should be replaced after script changes");
+            AssertEqual(2, parseCount, "Parser call count after script change");
+        }
+
         private static void SequenceResourceLocks_BlockOverlappingChannelsOnly()
         {
             var locks = new SequenceResourceLocks();
@@ -109,6 +144,22 @@ namespace usbrelay.Tests
             AssertFalse(relay.GetChannelState("6QMBS", 1), "CH1 should be off");
             AssertTrue(relay.GetChannelState("6QMBS", 2), "CH2 should be on after success branch");
             AssertTrue(result.Log.Any(line => line.Contains("OutputMatches READY|OK: success")), "Regex match should be logged");
+        }
+
+        private static void ProcessExternalToolRunner_DoesNotDeadlockWhenStderrPipeFills()
+        {
+            DateTime startedAfter = DateTime.Now.AddSeconds(-1);
+            var task = Task.Run(() => new ProcessExternalToolRunner().Run(Assembly.GetExecutingAssembly().Location, "--write-large-stderr"));
+
+            if (!task.Wait(TimeSpan.FromSeconds(5)))
+            {
+                KillStuckTestChildren(startedAfter);
+                throw new InvalidOperationException("External tool runner deadlocked while child wrote large stderr output");
+            }
+
+            AssertEqual(0, task.Result.ExitCode, "External tool exit code");
+            AssertTrue(task.Result.Output.Contains("stdout-done"), "External tool stdout should be captured");
+            AssertTrue(task.Result.Output.Length > 200000, "External tool stderr should be captured");
         }
 
         private static void MainForm_LoadsSavedSequencesIntoVisibleRows()
@@ -164,6 +215,22 @@ namespace usbrelay.Tests
                 InvokePrivate(form, "SequenceGrid_CellClick", sequenceList, new DataGridViewCellEventArgs(runColumnIndex, 0));
                 WaitUntil(() => relay.GetChannelState("6QMBS", 1), "Run button should execute sequence and turn CH1 on");
             }
+        }
+
+        private static void MainForm_AllOffRefreshesDevicesOnceAfterChannelUpdates()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "sequences.json");
+            var relay = new FakeRelayBackend(new RelayDevice("6QMBS", RelayDeviceType.FourChannel, 4, 0x0f));
+
+            using (var form = new MainForm(relay, new SequenceRepository(path)))
+            {
+                InvokePrivate(form, "AllOff");
+            }
+
+            for (int channel = 1; channel <= 4; channel++)
+                AssertFalse(relay.GetChannelState("6QMBS", channel), "Channel " + channel + " should be off");
+
+            AssertEqual(2, relay.EnumerateDevicesCallCount, "AllOff should enumerate for discovery and one final refresh only");
         }
 
         private static void MainLayoutSettings_RoundTripsWindowAndPaneSizes()
@@ -297,6 +364,26 @@ namespace usbrelay.Tests
             }
 
             throw new InvalidOperationException(failure);
+        }
+
+        private static void KillStuckTestChildren(DateTime startedAfter)
+        {
+            int currentProcessId = Process.GetCurrentProcess().Id;
+            foreach (var process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(Assembly.GetExecutingAssembly().Location)))
+            {
+                try
+                {
+                    if (process.Id != currentProcessId && process.StartTime >= startedAfter)
+                        process.Kill();
+                }
+                catch
+                {
+                }
+                finally
+                {
+                    process.Dispose();
+                }
+            }
         }
     }
 }
