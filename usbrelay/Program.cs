@@ -8,6 +8,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Windows.Forms;
 
 namespace usbrelay
 {
@@ -15,10 +16,25 @@ namespace usbrelay
     {
         enum Operations { NULL, LIST, STATUS, ONOFF };
 
+        [STAThread]
         static void Main(string[] args)
         {
-            if (args.Length < 1) {
-                usage();
+            if (args.Length == 0 || (args.Length == 1 && string.Equals(args[0], "-gui", StringComparison.OrdinalIgnoreCase))) {
+                ConsoleWindow.HideForGui();
+                Application.EnableVisualStyles();
+                Application.SetCompatibleTextRenderingDefault(false);
+                MainForm mainForm;
+                using (var splash = new SplashForm())
+                {
+                    splash.Show();
+                    splash.SetStatus("Discovering USB relay devices...");
+
+                    mainForm = new MainForm();
+                    mainForm.PrepareForDisplay();
+
+                    splash.Close();
+                }
+                Application.Run(mainForm);
             }
             else {
                 // command line data

@@ -1,0 +1,47 @@
+{
+  "app_name": "UsbRelay",
+  "style": "USB relay board inspired hardware icon set",
+  "palette": {
+    "pcb_red": "#E42B30",
+    "pcb_dark_red": "#A41923",
+    "relay_blue": "#47A0DC",
+    "terminal_green": "#32D791",
+    "metal": "#EBF2F6",
+    "background": "#131C2D",
+    "electric_accent": "#FFE15E"
+  },
+  "icon_sizes": [
+    16,
+    20,
+    24,
+    29,
+    32,
+    40,
+    48,
+    58,
+    60,
+    64,
+    72,
+    76,
+    80,
+    87,
+    96,
+    120,
+    128,
+    144,
+    152,
+    167,
+    180,
+    192,
+    256,
+    512,
+    1024
+  ],
+  "splash_sizes": {
+    "usbrelay-splash-desktop-1920x1080.png": "1920x1080",
+    "usbrelay-splash-desktop-2560x1440.png": "2560x1440",
+    "usbrelay-splash-desktop-1366x768.png": "1366x768",
+    "usbrelay-splash-mobile-1080x1920.png": "1080x1920",
+    "usbrelay-splash-square-1024x1024.png": "1024x1024"
+  }
+}

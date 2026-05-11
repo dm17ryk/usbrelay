@@ -8,3 +8,7 @@
 /usbrelay/obj
 /usbrelay/bin/Debug
 /usbrelay/.vs
+/usbrelay.Tests/bin
+/usbrelay.Tests/obj
+/.codegraph
+/.superpowers
