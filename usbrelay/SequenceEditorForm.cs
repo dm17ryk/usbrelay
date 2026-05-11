@@ -19,10 +19,18 @@ namespace usbrelay
         private readonly TextBox descriptionTextBox = new TextBox();
         private readonly TextBox diagnosticsTextBox = new TextBox();
         private readonly TextEditor editor = new TextEditor();
+        private readonly string layoutSettingsPath;
         private CompletionWindow completionWindow;
+        private SplitContainer splitContainer;
 
         public SequenceEditorForm(SequenceDefinition sequence)
+            : this(sequence, SequenceEditorLayoutSettings.DefaultPath)
         {
+        }
+
+        public SequenceEditorForm(SequenceDefinition sequence, string layoutSettingsPath)
+        {
+            this.layoutSettingsPath = layoutSettingsPath;
             InitializeComponent();
             LoadSequence(sequence);
         }
@@ -37,16 +45,31 @@ namespace usbrelay
             MinimumSize = new Size(780, 460);
             Font = new Font("Segoe UI", 9F);
             StartPosition = FormStartPosition.CenterParent;
+            Icon icon = AppAssets.LoadApplicationIcon();
+            if (icon != null)
+                Icon = icon;
 
-            var split = new SplitContainer
+            splitContainer = new SplitContainer
             {
                 Dock = DockStyle.Fill,
                 SplitterDistance = 280
             };
 
-            split.Panel1.Controls.Add(CreatePropertiesPanel());
-            split.Panel2.Controls.Add(CreateEditorPanel());
-            Controls.Add(split);
+            splitContainer.Panel1.Controls.Add(CreatePropertiesPanel());
+            splitContainer.Panel2.Controls.Add(CreateEditorPanel());
+            Controls.Add(splitContainer);
+        }
+
+        protected override void OnLoad(EventArgs e)
+        {
+            base.OnLoad(e);
+            LoadLayoutSettings();
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            SaveLayoutSettings();
+            base.OnFormClosing(e);
         }
 
         private Control CreatePropertiesPanel()
@@ -161,6 +184,55 @@ namespace usbrelay
                 Script = editor.Text
             };
             DialogResult = DialogResult.OK;
+        }
+
+        private void LoadLayoutSettings()
+        {
+            if (string.IsNullOrEmpty(layoutSettingsPath))
+                return;
+
+            SequenceEditorLayoutSettings settings;
+            try
+            {
+                settings = SequenceEditorLayoutSettings.Load(layoutSettingsPath);
+            }
+            catch
+            {
+                return;
+            }
+
+            if (settings == null)
+                return;
+
+            if (settings.Width >= MinimumSize.Width && settings.Height >= MinimumSize.Height)
+            {
+                StartPosition = FormStartPosition.Manual;
+                SetBounds(settings.Left, settings.Top, settings.Width, settings.Height);
+            }
+
+            if (settings.SplitterDistance > 0 && splitContainer.Width > 0)
+                splitContainer.SplitterDistance = Math.Min(settings.SplitterDistance, Math.Max(splitContainer.Panel1MinSize, splitContainer.Width - splitContainer.Panel2MinSize));
+
+            if (settings.WindowState != FormWindowState.Minimized)
+                WindowState = settings.WindowState;
+        }
+
+        private void SaveLayoutSettings()
+        {
+            if (string.IsNullOrEmpty(layoutSettingsPath))
+                return;
+
+            var bounds = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
+            var settings = new SequenceEditorLayoutSettings
+            {
+                Left = bounds.Left,
+                Top = bounds.Top,
+                Width = bounds.Width,
+                Height = bounds.Height,
+                WindowState = WindowState,
+                SplitterDistance = splitContainer.SplitterDistance
+            };
+            settings.Save(layoutSettingsPath);
         }
 
         private void TextArea_TextEntered(object sender, System.Windows.Input.TextCompositionEventArgs e)

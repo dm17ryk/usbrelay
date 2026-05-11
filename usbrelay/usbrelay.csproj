@@ -37,8 +37,7 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <PropertyGroup>
-    <ApplicationIcon>
-    </ApplicationIcon>
+    <ApplicationIcon>assets\icons\usbrelay.ico</ApplicationIcon>
   </PropertyGroup>
   <PropertyGroup>
     <StartupObject>usbrelay.Program</StartupObject>
@@ -201,6 +200,7 @@
       <DesignTime>True</DesignTime>
       <DependentUpon>Resources.resx</DependentUpon>
     </Compile>
+    <Compile Include="AppAssets.cs" />
     <Compile Include="IRelayBackend.cs" />
     <Compile Include="MainLayoutSettings.cs" />
     <Compile Include="MainForm.cs" />
@@ -208,7 +208,9 @@
     <Compile Include="RelayDevice.cs" />
     <Compile Include="RelayDeviceType.cs" />
     <Compile Include="RelayService.cs" />
+    <Compile Include="SequenceEditorLayoutSettings.cs" />
     <Compile Include="SequenceEditorForm.cs" />
+    <Compile Include="SplashForm.cs" />
     <Compile Include="Sequences\ISequenceAction.cs" />
     <Compile Include="Sequences\RelayResource.cs" />
     <Compile Include="Sequences\RelaySequenceBackend.cs" />
@@ -251,6 +253,14 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Costura64\usb_relay_device.dll" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="assets\icons\usbrelay.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="assets\splash\usbrelay-splash-desktop-1366x768.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="AvalonEdit">

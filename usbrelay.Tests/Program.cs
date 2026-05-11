@@ -20,8 +20,11 @@ namespace usbrelay.Tests
                 SequenceResourceLocks_BlockOverlappingChannelsOnly,
                 SequenceRunner_ExecutesRegexSuccessBranchWithFakeRelayAndTool,
                 MainForm_LoadsSavedSequencesIntoVisibleRows,
+                MainForm_RunButtonClickExecutesVisibleSequence,
                 MainLayoutSettings_RoundTripsWindowAndPaneSizes,
-                MainForm_SavesLayoutSettings
+                MainForm_SavesLayoutSettings,
+                SequenceEditorLayoutSettings_RoundTripsWindowAndSplitter,
+                SequenceEditorForm_SavesLayoutSettings
             };
 
             foreach (var test in tests)
@@ -136,6 +139,33 @@ namespace usbrelay.Tests
             }
         }
 
+        private static void MainForm_RunButtonClickExecutesVisibleSequence()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "sequences.json");
+            var repository = new SequenceRepository(path);
+            repository.Save(new[]
+            {
+                new SequenceDefinition
+                {
+                    Name = "Turn CH1 on",
+                    RunButtonText = "Run",
+                    Description = "Turns channel one on",
+                    Script = "sequence.PowerOn(\"6QMBS\", 1);"
+                }
+            });
+
+            var relay = new FakeRelayBackend(new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0));
+            using (var form = new MainForm(relay, repository))
+            {
+                InvokePrivate(form, "LoadSequences");
+                var sequenceList = (DataGridView)GetPrivateField(form, "sequenceGrid");
+                int runColumnIndex = sequenceList.Columns["RunColumn"].Index;
+
+                InvokePrivate(form, "SequenceGrid_CellClick", sequenceList, new DataGridViewCellEventArgs(runColumnIndex, 0));
+                WaitUntil(() => relay.GetChannelState("6QMBS", 1), "Run button should execute sequence and turn CH1 on");
+            }
+        }
+
         private static void MainLayoutSettings_RoundTripsWindowAndPaneSizes()
         {
             string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "layout.json");
@@ -184,9 +214,52 @@ namespace usbrelay.Tests
             AssertEqual(650, loaded.Height, "Saved Height");
         }
 
-        private static void InvokePrivate(object instance, string methodName)
+        private static void SequenceEditorLayoutSettings_RoundTripsWindowAndSplitter()
         {
-            instance.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.NonPublic).Invoke(instance, null);
+            string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "sequence-editor-layout.json");
+            var original = new SequenceEditorLayoutSettings
+            {
+                Left = 11,
+                Top = 22,
+                Width = 930,
+                Height = 610,
+                WindowState = FormWindowState.Normal,
+                SplitterDistance = 310
+            };
+
+            original.Save(path);
+            var loaded = SequenceEditorLayoutSettings.Load(path);
+
+            AssertEqual(original.Left, loaded.Left, "Editor Left");
+            AssertEqual(original.Top, loaded.Top, "Editor Top");
+            AssertEqual(original.Width, loaded.Width, "Editor Width");
+            AssertEqual(original.Height, loaded.Height, "Editor Height");
+            AssertEqual(original.SplitterDistance, loaded.SplitterDistance, "Editor SplitterDistance");
+        }
+
+        private static void SequenceEditorForm_SavesLayoutSettings()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "sequence-editor-layout.json");
+
+            using (var form = new SequenceEditorForm(null, path))
+            {
+                form.SetBounds(12, 34, 920, 600);
+                var split = (SplitContainer)GetPrivateField(form, "splitContainer");
+                split.SplitterDistance = 300;
+                InvokePrivate(form, "SaveLayoutSettings");
+            }
+
+            var loaded = SequenceEditorLayoutSettings.Load(path);
+            AssertEqual(12, loaded.Left, "Editor form saved Left");
+            AssertEqual(34, loaded.Top, "Editor form saved Top");
+            AssertEqual(920, loaded.Width, "Editor form saved Width");
+            AssertEqual(600, loaded.Height, "Editor form saved Height");
+            AssertEqual(300, loaded.SplitterDistance, "Editor form saved SplitterDistance");
+        }
+
+        private static void InvokePrivate(object instance, string methodName, params object[] arguments)
+        {
+            instance.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.NonPublic).Invoke(instance, arguments);
         }
 
         private static object GetPrivateField(object instance, string fieldName)
@@ -210,6 +283,20 @@ namespace usbrelay.Tests
         {
             if (value)
                 throw new InvalidOperationException(name);
+        }
+
+        private static void WaitUntil(Func<bool> condition, string failure)
+        {
+            DateTime deadline = DateTime.Now.AddSeconds(2);
+            while (DateTime.Now < deadline)
+            {
+                Application.DoEvents();
+                if (condition())
+                    return;
+                System.Threading.Thread.Sleep(10);
+            }
+
+            throw new InvalidOperationException(failure);
         }
     }
 }

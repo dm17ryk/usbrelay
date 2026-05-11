@@ -25,6 +25,7 @@ namespace usbrelay
         private TextBox logTextBox;
         private TextBox statusTextBox;
         private SequenceDefinition selectedSequence;
+        private bool loaded;
         private bool defaultSplitterApplied;
 
         public MainForm()
@@ -49,9 +50,18 @@ namespace usbrelay
         protected override void OnLoad(EventArgs e)
         {
             base.OnLoad(e);
+            PrepareForDisplay();
+        }
+
+        public void PrepareForDisplay()
+        {
+            if (loaded)
+                return;
+
             LoadLayoutSettings();
             LoadSequences();
             RefreshDevices();
+            loaded = true;
         }
 
         protected override void OnShown(EventArgs e)
@@ -74,6 +84,9 @@ namespace usbrelay
             Height = 720;
             MinimumSize = new Size(840, 520);
             Font = new Font("Segoe UI", 9F);
+            Icon icon = AppAssets.LoadApplicationIcon();
+            if (icon != null)
+                Icon = icon;
 
             splitContainer = new SplitContainer
             {
@@ -207,10 +220,11 @@ namespace usbrelay
 
         private void ApplyDefaultSplitterDistance()
         {
-            if (defaultSplitterApplied || splitContainer.Width <= 0 || splitContainer.SplitterDistance > 0)
+            if (defaultSplitterApplied || splitContainer.Width <= 0)
                 return;
 
-            splitContainer.SplitterDistance = Math.Max(splitContainer.Panel1MinSize, (int)(splitContainer.Width * 0.4));
+            int maximum = Math.Max(splitContainer.Panel1MinSize, splitContainer.Width - splitContainer.Panel2MinSize - splitContainer.SplitterWidth);
+            splitContainer.SplitterDistance = Math.Min(maximum, Math.Max(splitContainer.Panel1MinSize, (int)(splitContainer.Width * 0.4)));
             defaultSplitterApplied = true;
         }
 
@@ -263,7 +277,7 @@ namespace usbrelay
                 return;
 
             selectedSequence = sequence;
-            if (sequenceGrid.Columns[e.ColumnIndex].Name == "RunColumn" && !sequenceGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].ReadOnly)
+            if (sequenceGrid.Columns[e.ColumnIndex].Name == "RunColumn")
                 RunSequence(sequence);
         }
 
@@ -487,7 +501,9 @@ namespace usbrelay
                     continue;
 
                 var parsed = SequenceParser.Parse(sequence.Script);
-                row.Cells["RunColumn"].ReadOnly = !parsed.IsValid || parsed.Resources.Any(resource => resourceLocks.IsBusy(resource));
+                bool busy = parsed.Resources.Any(resource => resourceLocks.IsBusy(resource));
+                row.Cells["RunColumn"].Value = !parsed.IsValid ? "Invalid" : busy ? "Busy" : sequence.DisplayRunButtonText;
+                row.Cells["RunColumn"].Style.ForeColor = !parsed.IsValid || busy ? SystemColors.GrayText : SystemColors.ControlText;
             }
 
             foreach (Control group in devicesPanel.Controls)

@@ -27,7 +27,18 @@ namespace usbrelay
                 FreeConsole();
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
-                Application.Run(new MainForm());
+                MainForm mainForm;
+                using (var splash = new SplashForm())
+                {
+                    splash.Show();
+                    splash.SetStatus("Discovering USB relay devices...");
+
+                    mainForm = new MainForm();
+                    mainForm.PrepareForDisplay();
+
+                    splash.Close();
+                }
+                Application.Run(mainForm);
             }
             else {
                 // command line data
