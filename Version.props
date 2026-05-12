@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
-    <UsbRelayVersion>1.0.0.5</UsbRelayVersion>
+    <UsbRelayVersion>1.0.0.6</UsbRelayVersion>
     <UsbRelayAssemblyTitle>USB-Relay Utility</UsbRelayAssemblyTitle>
     <UsbRelayDescription>A simple utility to control, list, and query USB-Relay devices.</UsbRelayDescription>
     <UsbRelayCompany>Min Xie (minxie.dallas@gmail.com)</UsbRelayCompany>
