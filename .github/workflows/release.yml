@@ -26,7 +26,9 @@ jobs:
 
       - name: Restore NuGet packages
         shell: pwsh
-        run: nuget restore usbrelay.sln
+        run: |
+          nuget restore usbrelay.sln
+          nuget install usbrelay\packages.config -OutputDirectory packages
 
       - name: Install NSIS when missing
         shell: pwsh
