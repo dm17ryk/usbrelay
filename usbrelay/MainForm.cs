@@ -14,9 +14,11 @@ namespace usbrelay
         private readonly RelayService relayService;
         private readonly SequenceRepository sequenceRepository;
         private readonly string layoutSettingsPath;
+        private readonly Func<SequenceDefinition, bool> removeSequenceConfirmation;
         private readonly SequenceResourceLocks resourceLocks = new SequenceResourceLocks();
         private readonly SequenceParseCache sequenceParseCache = new SequenceParseCache();
         private readonly List<SequenceDefinition> sequences = new List<SequenceDefinition>();
+        private IReadOnlyList<RelayDevice> currentDevices = new RelayDevice[0];
 
         private DataGridView sequenceGrid;
         private FlowLayoutPanel devicesPanel;
@@ -40,11 +42,21 @@ namespace usbrelay
         }
 
         public MainForm(IRelayBackend relayBackend, SequenceRepository sequenceRepository, string layoutSettingsPath)
+            : this(relayBackend, sequenceRepository, layoutSettingsPath, null)
+        {
+        }
+
+        public MainForm(
+            IRelayBackend relayBackend,
+            SequenceRepository sequenceRepository,
+            string layoutSettingsPath,
+            Func<SequenceDefinition, bool> removeSequenceConfirmation)
         {
             this.relayBackend = relayBackend;
             this.relayService = new RelayService(relayBackend);
             this.sequenceRepository = sequenceRepository;
             this.layoutSettingsPath = layoutSettingsPath;
+            this.removeSequenceConfirmation = removeSequenceConfirmation ?? ConfirmRemoveSequence;
             InitializeComponent();
         }
 
@@ -294,7 +306,7 @@ namespace usbrelay
 
         private void AddSequence()
         {
-            using (var form = new SequenceEditorForm(null))
+            using (var form = new SequenceEditorForm(null, currentDevices))
             {
                 if (form.ShowDialog(this) != DialogResult.OK)
                     return;
@@ -312,7 +324,7 @@ namespace usbrelay
                 return;
 
             int index = sequences.IndexOf(selectedSequence);
-            using (var form = new SequenceEditorForm(selectedSequence))
+            using (var form = new SequenceEditorForm(selectedSequence, currentDevices))
             {
                 if (form.ShowDialog(this) != DialogResult.OK)
                     return;
@@ -329,10 +341,28 @@ namespace usbrelay
             if (selectedSequence == null)
                 return;
 
+            if (!removeSequenceConfirmation(selectedSequence))
+                return;
+
             sequences.Remove(selectedSequence);
             selectedSequence = null;
             SaveSequences();
             RenderSequences();
+        }
+
+        private bool ConfirmRemoveSequence(SequenceDefinition sequence)
+        {
+            string name = sequence == null || string.IsNullOrWhiteSpace(sequence.Name)
+                ? "this sequence"
+                : "\"" + sequence.Name + "\"";
+
+            return MessageBox.Show(
+                this,
+                "Remove " + name + "?",
+                "Remove sequence",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2) == DialogResult.Yes;
         }
 
         private async void RunSequence(SequenceDefinition sequence)
@@ -377,6 +407,7 @@ namespace usbrelay
             try
             {
                 devices = relayService.EnumerateDevices();
+                currentDevices = devices.ToArray();
             }
             catch (Exception ex)
             {

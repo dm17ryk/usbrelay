@@ -7,7 +7,7 @@
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
     <ProjectGuid>{631C2238-F719-436A-97B5-FB4F7AD7979E}</ProjectGuid>
-    <OutputType>Exe</OutputType>
+    <OutputType>WinExe</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <RootNamespace>usbrelay</RootNamespace>
     <AssemblyName>usbrelay</AssemblyName>
@@ -215,6 +215,7 @@
     <Compile Include="RelayDevice.cs" />
     <Compile Include="RelayDeviceType.cs" />
     <Compile Include="RelayService.cs" />
+    <Compile Include="SequenceCompletionProvider.cs" />
     <Compile Include="SequenceEditorLayoutSettings.cs" />
     <Compile Include="SequenceEditorForm.cs" />
     <Compile Include="SplashForm.cs" />

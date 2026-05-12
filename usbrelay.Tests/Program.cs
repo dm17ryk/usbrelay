@@ -28,6 +28,11 @@ namespace usbrelay.Tests
             {
                 SequenceRepository_RoundTripsSequencesAsJson,
                 SequenceParser_ParsesDslAndResources,
+                SequenceCompletionProvider_SuggestsSequenceCommands,
+                SequenceCompletionProvider_SuggestsRelayStateValues,
+                SequenceCompletionProvider_UsesConnectedDeviceChannels,
+                SequenceCompletionProvider_FallsBackWhenNoDevicesAreConnected,
+                SequenceCompletionProvider_SuggestsOutputMatchesForToolVariables,
                 SequenceParseCache_ReusesParseUntilScriptChanges,
                 SequenceResourceLocks_BlockOverlappingChannelsOnly,
                 SequenceRunner_ExecutesRegexSuccessBranchWithFakeRelayAndTool,
@@ -55,12 +60,16 @@ namespace usbrelay.Tests
                 Program_HelpArgumentPrintsExamples,
                 Program_VersionArgumentPrintsVersionAndExits,
                 Program_AssemblyVersionMatchesVersionProps,
+                Program_ProjectBuildsAsWindowsGuiExecutable,
                 MainForm_LoadsSavedSequencesIntoVisibleRows,
                 MainForm_RunButtonClickExecutesVisibleSequence,
+                MainForm_RemoveSequenceCancelKeepsSequence,
+                MainForm_RemoveSequenceConfirmDeletesSequence,
                 MainForm_AllOffRefreshesDevicesOnceAfterChannelUpdates,
                 MainLayoutSettings_RoundTripsWindowAndPaneSizes,
                 MainForm_SavesLayoutSettings,
                 SequenceEditorLayoutSettings_RoundTripsWindowAndSplitter,
+                SequenceEditorForm_StoresConnectedDevicesForCompletion,
                 SequenceEditorForm_SavesLayoutSettings
             };
 
@@ -109,6 +118,52 @@ namespace usbrelay.Tests
             AssertTrue(result.IsValid, "Script should validate");
             AssertEqual(4, result.Actions.Count, "Action count");
             AssertTrue(result.Resources.Contains(new RelayResource("6QMBS", 1)), "CH1 resource should be claimed");
+        }
+
+        private static void SequenceCompletionProvider_SuggestsSequenceCommands()
+        {
+            var result = SequenceCompletionProvider.GetCompletions("sequence.", "sequence.".Length, new RelayDevice[0], force: false);
+            string[] completions = result.Items.Select(item => item.Text).ToArray();
+
+            AssertContains(completions, "PowerOn(\"6QMBS\", 1)", "PowerOn completion");
+            AssertContains(completions, "PowerOff(\"6QMBS\", 1)", "PowerOff completion");
+            AssertContains(completions, "Sleep(500)", "Sleep completion");
+            AssertContains(completions, "ReadChannel(\"6QMBS\", 1)", "ReadChannel completion");
+            AssertContains(completions, "WaitChannel(\"6QMBS\", 1, RelayState.On, 3000)", "WaitChannel completion");
+            AssertContains(completions, "RunTool(\"tool.exe\", \"--args\")", "RunTool completion");
+            AssertContains(completions, "Fail(\"message\")", "Fail completion");
+        }
+
+        private static void SequenceCompletionProvider_SuggestsRelayStateValues()
+        {
+            var result = SequenceCompletionProvider.GetCompletions("sequence.WaitChannel(\"6QMBS\", 1, RelayState.", "sequence.WaitChannel(\"6QMBS\", 1, RelayState.".Length, new RelayDevice[0], force: false);
+
+            AssertSequence(new[] { "Off", "On" }, result.Items.Select(item => item.Text), "RelayState completions");
+        }
+
+        private static void SequenceCompletionProvider_UsesConnectedDeviceChannels()
+        {
+            var devices = new[] { new RelayDevice("ABC123", RelayDeviceType.FourChannel, 4, 0) };
+            var result = SequenceCompletionProvider.GetCompletions("sequence.", "sequence.".Length, devices, force: false);
+            string[] completions = result.Items.Select(item => item.Text).ToArray();
+
+            AssertContains(completions, "PowerOn(\"ABC123\", 4)", "Connected device channel completion");
+            AssertFalse(completions.Contains("PowerOn(\"6QMBS\", 1)"), "Fallback serial should not be used when connected devices exist");
+        }
+
+        private static void SequenceCompletionProvider_FallsBackWhenNoDevicesAreConnected()
+        {
+            var result = SequenceCompletionProvider.GetCompletions("sequence.", "sequence.".Length, new RelayDevice[0], force: false);
+
+            AssertContains(result.Items.Select(item => item.Text), "PowerOn(\"6QMBS\", 1)", "Fallback completion");
+        }
+
+        private static void SequenceCompletionProvider_SuggestsOutputMatchesForToolVariables()
+        {
+            string script = "var probe = sequence.RunTool(\"tool.exe\", \"--probe\");" + Environment.NewLine + "if (probe.";
+            var result = SequenceCompletionProvider.GetCompletions(script, script.Length, new RelayDevice[0], force: false);
+
+            AssertContains(result.Items.Select(item => item.Text), "OutputMatches(\"READY|OK\")", "OutputMatches completion");
         }
 
         private static void SequenceParseCache_ReusesParseUntilScriptChanges()
@@ -372,6 +427,15 @@ namespace usbrelay.Tests
             AssertEqual(expectedVersion, assemblyVersion, "Assembly version should match Version.props");
         }
 
+        private static void Program_ProjectBuildsAsWindowsGuiExecutable()
+        {
+            string solutionPath = FindRepoFile("usbrelay.sln");
+            string projectPath = Path.Combine(Path.GetDirectoryName(solutionPath), "usbrelay", "usbrelay.csproj");
+            string outputType = ReadXmlProperty(projectPath, "OutputType");
+
+            AssertEqual("WinExe", outputType, "GUI executable should not create a console window on shell launch");
+        }
+
         private static void MainForm_LoadsSavedSequencesIntoVisibleRows()
         {
             string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "sequences.json");
@@ -425,6 +489,71 @@ namespace usbrelay.Tests
                 InvokePrivate(form, "SequenceGrid_CellClick", sequenceList, new DataGridViewCellEventArgs(runColumnIndex, 0));
                 WaitUntil(() => relay.GetChannelState("6QMBS", 1), "Run button should execute sequence and turn CH1 on");
             }
+        }
+
+        private static void MainForm_RemoveSequenceCancelKeepsSequence()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "sequences.json");
+            var repository = new SequenceRepository(path);
+            repository.Save(new[]
+            {
+                new SequenceDefinition
+                {
+                    Name = "Protected sequence",
+                    RunButtonText = "Run",
+                    Description = "Do not remove",
+                    Script = "sequence.PowerOff(\"6QMBS\", 1);"
+                }
+            });
+
+            bool confirmationRequested = false;
+            using (var form = new MainForm(
+                new FakeRelayBackend(new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0)),
+                repository,
+                null,
+                sequence =>
+                {
+                    confirmationRequested = true;
+                    AssertEqual("Protected sequence", sequence.Name, "Confirmation sequence name");
+                    return false;
+                }))
+            {
+                InvokePrivate(form, "LoadSequences");
+                SelectFirstSequence(form);
+                InvokePrivate(form, "RemoveSequence");
+            }
+
+            AssertTrue(confirmationRequested, "Remove should request confirmation");
+            AssertEqual(1, repository.Load().Count, "Cancel should keep saved sequence");
+        }
+
+        private static void MainForm_RemoveSequenceConfirmDeletesSequence()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "sequences.json");
+            var repository = new SequenceRepository(path);
+            repository.Save(new[]
+            {
+                new SequenceDefinition
+                {
+                    Name = "Removable sequence",
+                    RunButtonText = "Run",
+                    Description = "Remove",
+                    Script = "sequence.PowerOff(\"6QMBS\", 1);"
+                }
+            });
+
+            using (var form = new MainForm(
+                new FakeRelayBackend(new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0)),
+                repository,
+                null,
+                sequence => true))
+            {
+                InvokePrivate(form, "LoadSequences");
+                SelectFirstSequence(form);
+                InvokePrivate(form, "RemoveSequence");
+            }
+
+            AssertEqual(0, repository.Load().Count, "Confirmed remove should delete saved sequence");
         }
 
         private static void MainForm_AllOffRefreshesDevicesOnceAfterChannelUpdates()
@@ -514,6 +643,18 @@ namespace usbrelay.Tests
             AssertEqual(original.SplitterDistance, loaded.SplitterDistance, "Editor SplitterDistance");
         }
 
+        private static void SequenceEditorForm_StoresConnectedDevicesForCompletion()
+        {
+            var devices = new[] { new RelayDevice("ABC123", RelayDeviceType.TwoChannel, 2, 0) };
+            using (var form = new SequenceEditorForm(null, null, devices))
+            {
+                var storedDevices = (IReadOnlyList<RelayDevice>)GetPrivateField(form, "connectedDevices");
+
+                AssertEqual(1, storedDevices.Count, "Editor connected device count");
+                AssertEqual("ABC123", storedDevices[0].SerialNumber, "Editor connected device serial");
+            }
+        }
+
         private static void SequenceEditorForm_SavesLayoutSettings()
         {
             string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "sequence-editor-layout.json");
@@ -537,6 +678,13 @@ namespace usbrelay.Tests
         private static void InvokePrivate(object instance, string methodName, params object[] arguments)
         {
             instance.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.NonPublic).Invoke(instance, arguments);
+        }
+
+        private static void SelectFirstSequence(MainForm form)
+        {
+            var sequenceList = (DataGridView)GetPrivateField(form, "sequenceGrid");
+            sequenceList.Rows[0].Selected = true;
+            InvokePrivate(form, "SelectGridSequence");
         }
 
         private static object GetPrivateField(object instance, string fieldName)
