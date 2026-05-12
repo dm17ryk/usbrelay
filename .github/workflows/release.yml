@@ -1,0 +1,80 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Restore NuGet packages
+        shell: pwsh
+        run: nuget restore usbrelay.sln
+
+      - name: Install NSIS when missing
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis.exe -ErrorAction SilentlyContinue) -and
+              -not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe")) {
+            choco install nsis -y --no-progress
+          }
+
+      - name: Build, test, and package
+        shell: pwsh
+        run: .\scripts\Build-Installer.ps1 -Configuration Release -RunTests
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: usbrelay-release
+          path: artifacts/release/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          $version = & .\scripts\Get-UsbRelayVersion.ps1
+          $tagVersion = $env:TAG_NAME.Substring(1)
+          if ($tagVersion -ne $version) {
+            throw "Tag $env:TAG_NAME does not match Version.props value $version."
+          }
+
+          $assets = @(
+            "artifacts\release\usbrelay-v$version.zip",
+            "artifacts\release\usbrelay-setup-v$version.exe"
+          )
+
+          foreach ($asset in $assets) {
+            if (-not (Test-Path -LiteralPath $asset)) {
+              throw "Release asset was not found: $asset"
+            }
+          }
+
+          gh release view $env:TAG_NAME *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:TAG_NAME @assets --clobber
+          } else {
+            gh release create $env:TAG_NAME @assets --title "usbrelay $version" --notes "Release $version"
+          }

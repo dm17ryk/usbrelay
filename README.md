@@ -38,6 +38,8 @@ NEWBN_2=0
 
 # binary release
 
+[Version 1.0.0.5](https://github.com/dm17ryk/usbrelay/releases/tag/v1.0.0.5) - installer and portable zip are built by GitHub Actions.
+
 [Version 1.0.0.3](https://github.com/mxcoppell/usbrelay/releases/tag/1.0.0.3) - [usbrelay-v1.0.0.3.zip](https://github.com/mxcoppell/usbrelay/releases/download/1.0.0.3/usbrelay-v1.0.0.3.zip)
 
 # current state

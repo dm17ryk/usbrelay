@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using System.Xml;
 using usbrelay.Sequences;
 
 namespace usbrelay.Tests
@@ -53,6 +54,7 @@ namespace usbrelay.Tests
                 Program_HelpArgumentPrintsHelpAndExits,
                 Program_HelpArgumentPrintsExamples,
                 Program_VersionArgumentPrintsVersionAndExits,
+                Program_AssemblyVersionMatchesVersionProps,
                 MainForm_LoadsSavedSequencesIntoVisibleRows,
                 MainForm_RunButtonClickExecutesVisibleSequence,
                 MainForm_AllOffRefreshesDevicesOnceAfterChannelUpdates,
@@ -361,6 +363,15 @@ namespace usbrelay.Tests
             AssertEqual(string.Empty, result.Error, "-v stderr");
         }
 
+        private static void Program_AssemblyVersionMatchesVersionProps()
+        {
+            string versionPropsPath = FindRepoFile("Version.props");
+            string expectedVersion = ReadXmlProperty(versionPropsPath, "UsbRelayVersion");
+            string assemblyVersion = typeof(MainForm).Assembly.GetName().Version.ToString();
+
+            AssertEqual(expectedVersion, assemblyVersion, "Assembly version should match Version.props");
+        }
+
         private static void MainForm_LoadsSavedSequencesIntoVisibleRows()
         {
             string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "sequences.json");
@@ -560,6 +571,37 @@ namespace usbrelay.Tests
         private static T GetProperty<T>(object instance, string propertyName)
         {
             return (T)instance.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic).GetValue(instance);
+        }
+
+        private static string FindRepoFile(string fileName)
+        {
+            string directory = AppDomain.CurrentDomain.BaseDirectory;
+            while (!string.IsNullOrEmpty(directory))
+            {
+                string candidate = Path.Combine(directory, fileName);
+                if (File.Exists(candidate))
+                    return candidate;
+
+                DirectoryInfo parent = Directory.GetParent(directory);
+                directory = parent == null ? null : parent.FullName;
+            }
+
+            throw new FileNotFoundException("Could not find repository file.", fileName);
+        }
+
+        private static string ReadXmlProperty(string path, string propertyName)
+        {
+            var document = new XmlDocument();
+            document.Load(path);
+
+            var namespaceManager = new XmlNamespaceManager(document.NameTable);
+            namespaceManager.AddNamespace("msb", "http://schemas.microsoft.com/developer/msbuild/2003");
+
+            XmlNode node = document.SelectSingleNode("/msb:Project/msb:PropertyGroup/msb:" + propertyName, namespaceManager);
+            if (node == null || string.IsNullOrWhiteSpace(node.InnerText))
+                throw new InvalidOperationException("Property " + propertyName + " was not found in " + path);
+
+            return node.InnerText.Trim();
         }
 
         private static string[] RunCompletion(string commandLine)
