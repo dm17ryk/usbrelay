@@ -215,6 +215,7 @@
     <Compile Include="RelayDevice.cs" />
     <Compile Include="RelayDeviceType.cs" />
     <Compile Include="RelayService.cs" />
+    <Compile Include="SequenceCompletionProvider.cs" />
     <Compile Include="SequenceEditorLayoutSettings.cs" />
     <Compile Include="SequenceEditorForm.cs" />
     <Compile Include="SplashForm.cs" />

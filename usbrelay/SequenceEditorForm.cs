@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
@@ -19,18 +20,30 @@ namespace usbrelay
         private readonly TextBox descriptionTextBox = new TextBox();
         private readonly TextBox diagnosticsTextBox = new TextBox();
         private readonly TextEditor editor = new TextEditor();
+        private readonly IReadOnlyList<RelayDevice> connectedDevices;
         private readonly string layoutSettingsPath;
         private CompletionWindow completionWindow;
         private SplitContainer splitContainer;
 
         public SequenceEditorForm(SequenceDefinition sequence)
-            : this(sequence, SequenceEditorLayoutSettings.DefaultPath)
+            : this(sequence, SequenceEditorLayoutSettings.DefaultPath, null)
+        {
+        }
+
+        public SequenceEditorForm(SequenceDefinition sequence, IEnumerable<RelayDevice> connectedDevices)
+            : this(sequence, SequenceEditorLayoutSettings.DefaultPath, connectedDevices)
         {
         }
 
         public SequenceEditorForm(SequenceDefinition sequence, string layoutSettingsPath)
+            : this(sequence, layoutSettingsPath, null)
+        {
+        }
+
+        public SequenceEditorForm(SequenceDefinition sequence, string layoutSettingsPath, IEnumerable<RelayDevice> connectedDevices)
         {
             this.layoutSettingsPath = layoutSettingsPath;
+            this.connectedDevices = (connectedDevices ?? Enumerable.Empty<RelayDevice>()).ToArray();
             InitializeComponent();
             LoadSequence(sequence);
         }
@@ -126,7 +139,9 @@ namespace usbrelay
             editor.FontFamily = new System.Windows.Media.FontFamily("Consolas");
             editor.FontSize = 13;
             editor.SyntaxHighlighting = HighlightingManager.Instance.GetDefinition("C#");
+            editor.TextArea.TextEntering += TextArea_TextEntering;
             editor.TextArea.TextEntered += TextArea_TextEntered;
+            editor.TextArea.KeyDown += TextArea_KeyDown;
 
             return new ElementHost
             {
@@ -235,20 +250,50 @@ namespace usbrelay
             settings.Save(layoutSettingsPath);
         }
 
+        private void TextArea_TextEntering(object sender, System.Windows.Input.TextCompositionEventArgs e)
+        {
+            if (e.Text.Length == 0 || completionWindow == null)
+                return;
+
+            char value = e.Text[0];
+            if (!char.IsLetterOrDigit(value) && value != '_')
+                completionWindow.CompletionList.RequestInsertion(e);
+        }
+
         private void TextArea_TextEntered(object sender, System.Windows.Input.TextCompositionEventArgs e)
         {
             if (e.Text != ".")
                 return;
 
+            ShowCompletion(force: false);
+        }
+
+        private void TextArea_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+        {
+            if (e.Key != System.Windows.Input.Key.Space ||
+                (System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Control) != System.Windows.Input.ModifierKeys.Control)
+                return;
+
+            ShowCompletion(force: true);
+            e.Handled = true;
+        }
+
+        private void ShowCompletion(bool force)
+        {
+            SequenceCompletionResult result = SequenceCompletionProvider.GetCompletions(editor.Text, editor.CaretOffset, connectedDevices, force);
+            if (result.Items.Count == 0)
+                return;
+
+            if (completionWindow != null)
+                completionWindow.Close();
+
             completionWindow = new CompletionWindow(editor.TextArea);
+            completionWindow.StartOffset = result.ReplacementStart;
+            completionWindow.Width = 360;
+            completionWindow.MaxHeight = 320;
             var data = completionWindow.CompletionList.CompletionData;
-            data.Add(new CompletionData("PowerOn(\"6QMBS\", 1)", "Turn a relay channel on"));
-            data.Add(new CompletionData("PowerOff(\"6QMBS\", 1)", "Turn a relay channel off"));
-            data.Add(new CompletionData("Sleep(500)", "Pause sequence execution"));
-            data.Add(new CompletionData("ReadChannel(\"6QMBS\", 1)", "Read channel status"));
-            data.Add(new CompletionData("WaitChannel(\"6QMBS\", 1, RelayState.On, 3000)", "Wait for channel status"));
-            data.Add(new CompletionData("RunTool(\"tool.exe\", \"--args\")", "Run external process and wait for exit"));
-            data.Add(new CompletionData("Fail(\"message\")", "Fail the current sequence"));
+            foreach (SequenceCompletionItem item in result.Items)
+                data.Add(new CompletionData(item.Text, item.Description));
             completionWindow.Show();
             completionWindow.Closed += (s, args) => completionWindow = null;
         }
