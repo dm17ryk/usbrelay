@@ -47,41 +47,79 @@ Current version is implemented in C# (VS2019). Porting to other platforms should
 # help
 
 ```
-NAME
-        usbrelay - a simple utility to control, list and query USB-Relay devices
+Description:
+  A simple utility to control, list, and query USB-Relay devices.
 
-SYNOPSIS
-        usbrelay [ -list ] [ -status ] [ -serial serial-number ]
-                 [ -on channels ] [ -off channels ]
+Usage:
+  usbrelay [options]
 
-COMMAND LINE OPTIONS
-        -list           List all available serial numbers of USB-Relay devices connected.
+Options:
+  --list             List all available serial numbers of connected USB-Relay devices.
+  --status           Display relay channel status for connected USB-Relay devices.
+  --serial <serial>  Specify the serial number of the USB-Relay device to operate.
+  --on <on>          Turn on the relay channels specified.
+  --off <off>        Turn off the relay channels specified.
+  --gui              Start the graphical user interface from a terminal.
+  -?, -h, --help     Show help and usage information
+  --version          Show version information
 
-        -status         Display on/off status of all the channels on the USB-Relay devices connected.
-
-        -serial serial-number
-                        Specify the serial number of the USB-Relay device to operate.
-
-        -on channels
-                        Turn on the relay channels specified.
-
-        -off channels
-                        Turn off the relay channels specified.
-
-EXAMPLES
-        usbrelay -list
-
-        usbrelay -status
-
-        usbrelay -serial BITFT -on 1
-        usbrelay -serial BITFT -on 1 2 3
-
-        usbrelay -serial BITFT -off 2
-        usbrelay -serial BITFT -off 2 5 6
-
-        usbrelay -serial BITFT -on 1 -off 2
-        usbrelay -serial BITFT -on 1 3 5 -off 2 4 6
+Examples:
+  usbrelay --list
+  usbrelay --status
+  usbrelay --serial BITFT --on 1
+  usbrelay --serial BITFT --on 1 2 3
+  usbrelay --serial BITFT --off 2
+  usbrelay --serial BITFT --on 1 3 5 --off 2 4 6
+  usbrelay --gui
 ```
+
+The legacy single-dash options are still accepted for compatibility: `-list`,
+`-status`, `-serial`, `-on`, `-off`, and `-gui`. `-v` is accepted as a short
+alias for `--version`.
+
+# shell completion
+
+PowerShell and pwsh can load the native argument completer directly from this
+repository. For one session:
+
+```
+PS D:\bin> . D:\path\to\usbrelay\scripts\usbrelay-completion.ps1 -CommandPath D:\bin\usbrelay.exe
+```
+
+To load it for every PowerShell session, add the same dot-source command to
+`$PROFILE`:
+
+```
+PS D:\bin> Add-Content $PROFILE '. D:\path\to\usbrelay\scripts\usbrelay-completion.ps1 -CommandPath D:\bin\usbrelay.exe'
+```
+
+The PowerShell completer registers both `usbrelay` and `usbrelay.exe`. It
+completes options, help/version aliases, GUI mode, legacy single-dash aliases,
+and channel values `1` through `8` for `--on`, `-on`, `--off`, and `-off`.
+The script also creates a session-local `usbrelay` alias to the `-CommandPath`
+target. Use that alias for completion instead of registering relative paths such
+as `.\usbrelay\bin\Debug\usbrelay.exe`; some PowerShell completion/menu modules
+build regular expressions from command names and do not escape backslashes.
+When loaded, the script also removes stale usbrelay path aliases from
+`PSCompletions` state if that module is present.
+
+Clink provides programmable completion for `cmd.exe`. Copy or link the Clink
+script into one of Clink's loaded script directories, then restart `cmd.exe` or
+reload Clink scripts:
+
+```
+copy D:\path\to\usbrelay\scripts\clink\completions\usbrelay.lua %LOCALAPPDATA%\clink\
+```
+
+If `usbrelay.exe` is not on `PATH`, set `USBRELAY_COMPLETION_COMMAND` to the
+full executable path before starting `cmd.exe`:
+
+```
+setx USBRELAY_COMPLETION_COMMAND D:\bin\usbrelay.exe
+```
+
+Stock `cmd.exe` does not expose a programmable completion API; `cmd` completion
+support is provided through Clink.
 
 # examples
 
