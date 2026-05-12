@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Text;
 
 namespace usbrelay
 {
@@ -70,13 +69,13 @@ namespace usbrelay
             {
                 if (!Console.IsOutputRedirected)
                 {
-                    var output = new StreamWriter(Console.OpenStandardOutput(), Encoding.Default) { AutoFlush = true };
+                    var output = new StreamWriter(Console.OpenStandardOutput(), Console.OutputEncoding) { AutoFlush = true };
                     Console.SetOut(output);
                 }
 
                 if (!Console.IsErrorRedirected)
                 {
-                    var error = new StreamWriter(Console.OpenStandardError(), Encoding.Default) { AutoFlush = true };
+                    var error = new StreamWriter(Console.OpenStandardError(), Console.OutputEncoding) { AutoFlush = true };
                     Console.SetError(error);
                 }
             }
