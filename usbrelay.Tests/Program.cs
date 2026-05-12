@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using System.Xml;
 using usbrelay.Sequences;
 
 namespace usbrelay.Tests
@@ -590,16 +591,17 @@ namespace usbrelay.Tests
 
         private static string ReadXmlProperty(string path, string propertyName)
         {
-            string startTag = "<" + propertyName + ">";
-            string endTag = "</" + propertyName + ">";
-            string content = File.ReadAllText(path);
-            int start = content.IndexOf(startTag, StringComparison.Ordinal);
-            int end = content.IndexOf(endTag, StringComparison.Ordinal);
+            var document = new XmlDocument();
+            document.Load(path);
 
-            if (start < 0 || end < 0 || end <= start)
+            var namespaceManager = new XmlNamespaceManager(document.NameTable);
+            namespaceManager.AddNamespace("msb", "http://schemas.microsoft.com/developer/msbuild/2003");
+
+            XmlNode node = document.SelectSingleNode("/msb:Project/msb:PropertyGroup/msb:" + propertyName, namespaceManager);
+            if (node == null || string.IsNullOrWhiteSpace(node.InnerText))
                 throw new InvalidOperationException("Property " + propertyName + " was not found in " + path);
 
-            return content.Substring(start + startTag.Length, end - start - startTag.Length).Trim();
+            return node.InnerText.Trim();
         }
 
         private static string[] RunCompletion(string commandLine)

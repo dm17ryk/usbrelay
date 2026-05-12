@@ -42,11 +42,48 @@ function Resolve-MakeNsisPath {
 function Reset-Directory {
     param([string]$Path)
 
+    Assert-SafeResetDirectory -Path $Path
+
     if (Test-Path -LiteralPath $Path) {
         Remove-Item -LiteralPath $Path -Recurse -Force
     }
 
     New-Item -ItemType Directory -Path $Path -Force | Out-Null
+}
+
+function Assert-SafeResetDirectory {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "Refusing to reset an empty directory path."
+    }
+
+    $fullPath = [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
+    $rootPath = [System.IO.Path]::GetPathRoot($fullPath).TrimEnd('\', '/')
+    if ($fullPath.Length -lt 10 -or [string]::Equals($fullPath, $rootPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to reset unsafe directory path: $fullPath"
+    }
+
+    $knownUnsafePaths = @(
+        $repoRoot,
+        [Environment]::GetFolderPath("Windows"),
+        [Environment]::GetFolderPath("ProgramFiles"),
+        [Environment]::GetFolderPath("ProgramFilesX86"),
+        [Environment]::GetFolderPath("UserProfile")
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object {
+        [System.IO.Path]::GetFullPath($_).TrimEnd('\', '/')
+    }
+
+    foreach ($unsafePath in $knownUnsafePaths) {
+        if ([string]::Equals($fullPath, $unsafePath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to reset protected directory path: $fullPath"
+        }
+    }
+
+    $repoRootFullPath = [System.IO.Path]::GetFullPath($repoRoot).TrimEnd('\', '/')
+    if ($repoRootFullPath.StartsWith($fullPath + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to reset a parent directory of the repository: $fullPath"
+    }
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
