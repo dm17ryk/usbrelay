@@ -1,11 +1,30 @@
 using System;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace usbrelay
 {
     internal static class ConsoleWindow
     {
+        private const int ATTACH_PARENT_PROCESS = -1;
         private const int SW_HIDE = 0;
+        private static bool attachedParentConsole;
+
+        public static bool PrepareForStartup()
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                return true;
+
+            if (GetConsoleWindow() == IntPtr.Zero)
+            {
+                attachedParentConsole = AttachConsole(ATTACH_PARENT_PROCESS);
+                if (attachedParentConsole)
+                    ReopenConsoleStreams();
+            }
+
+            return HasInheritedConsole();
+        }
 
         public static bool HasInheritedConsole()
         {
@@ -35,12 +54,41 @@ namespace usbrelay
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 return;
 
-            IntPtr consoleWindow = GetConsoleWindow();
-            if (consoleWindow != IntPtr.Zero)
-                ShowWindow(consoleWindow, SW_HIDE);
+            if (!attachedParentConsole)
+            {
+                IntPtr consoleWindow = GetConsoleWindow();
+                if (consoleWindow != IntPtr.Zero)
+                    ShowWindow(consoleWindow, SW_HIDE);
+            }
 
             FreeConsole();
         }
+
+        private static void ReopenConsoleStreams()
+        {
+            try
+            {
+                if (!Console.IsOutputRedirected)
+                {
+                    var output = new StreamWriter(Console.OpenStandardOutput(), Encoding.Default) { AutoFlush = true };
+                    Console.SetOut(output);
+                }
+
+                if (!Console.IsErrorRedirected)
+                {
+                    var error = new StreamWriter(Console.OpenStandardError(), Encoding.Default) { AutoFlush = true };
+                    Console.SetError(error);
+                }
+            }
+            catch
+            {
+                // Console stream repair is best-effort; redirected CLI tests and GUI startup
+                // should continue even when a host denies stream reopening.
+            }
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool AttachConsole(int dwProcessId);
 
         [DllImport("kernel32.dll")]
         private static extern bool FreeConsole();

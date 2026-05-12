@@ -60,6 +60,7 @@ namespace usbrelay.Tests
                 Program_HelpArgumentPrintsExamples,
                 Program_VersionArgumentPrintsVersionAndExits,
                 Program_AssemblyVersionMatchesVersionProps,
+                Program_ProjectBuildsAsWindowsGuiExecutable,
                 MainForm_LoadsSavedSequencesIntoVisibleRows,
                 MainForm_RunButtonClickExecutesVisibleSequence,
                 MainForm_RemoveSequenceCancelKeepsSequence,
@@ -424,6 +425,15 @@ namespace usbrelay.Tests
             string assemblyVersion = typeof(MainForm).Assembly.GetName().Version.ToString();
 
             AssertEqual(expectedVersion, assemblyVersion, "Assembly version should match Version.props");
+        }
+
+        private static void Program_ProjectBuildsAsWindowsGuiExecutable()
+        {
+            string solutionPath = FindRepoFile("usbrelay.sln");
+            string projectPath = Path.Combine(Path.GetDirectoryName(solutionPath), "usbrelay", "usbrelay.csproj");
+            string outputType = ReadXmlProperty(projectPath, "OutputType");
+
+            AssertEqual("WinExe", outputType, "GUI executable should not create a console window on shell launch");
         }
 
         private static void MainForm_LoadsSavedSequencesIntoVisibleRows()

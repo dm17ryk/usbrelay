@@ -18,7 +18,8 @@ namespace usbrelay
         [STAThread]
         static int Main(string[] args)
         {
-            if (SelectStartupMode(args, ConsoleWindow.HasInheritedConsole()) == StartupMode.Gui)
+            bool hasInheritedConsole = ConsoleWindow.PrepareForStartup();
+            if (SelectStartupMode(args, hasInheritedConsole) == StartupMode.Gui)
                 return RunGui();
 
             return UsbRelayCli.Run(args);
@@ -46,13 +47,15 @@ namespace usbrelay
             {
                 splash.Show();
                 splash.SetStatus("Discovering USB-Relay devices...");
+                splash.Refresh();
+                Application.DoEvents();
 
                 mainForm = new MainForm();
                 mainForm.PrepareForDisplay();
 
-                splash.Close();
+                mainForm.Shown += (sender, args) => splash.Close();
+                Application.Run(mainForm);
             }
-            Application.Run(mainForm);
             return 0;
         }
     }
