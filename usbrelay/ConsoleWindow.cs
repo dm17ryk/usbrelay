@@ -14,10 +14,20 @@ namespace usbrelay
 
             var processList = new uint[8];
             uint processCount = GetConsoleProcessList(processList, (uint)processList.Length);
-            if (processCount == 0)
+            return HasInheritedConsoleProcessCount(processCount);
+        }
+
+        static bool HasInheritedConsoleProcessCount(uint processCount)
+        {
+            if (processCount == 1)
+                return false;
+
+            if (processCount > 1)
                 return true;
 
-            return processCount > 1;
+            // GetConsoleProcessList returns 0 on failure. In that ambiguous case, prefer the
+            // shell/double-click behavior for no-argument startup instead of showing CLI help.
+            return false;
         }
 
         public static void HideForGui()

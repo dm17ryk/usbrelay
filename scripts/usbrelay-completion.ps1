@@ -12,6 +12,41 @@ if (Test-Path -LiteralPath $CommandPath) {
     $completionCommand = (Resolve-Path -LiteralPath $CommandPath).ProviderPath
 }
 
+function Remove-UsbRelayPathAliasesFromPSCompletions {
+    if (-not (Get-Variable -Name PSCompletions -Scope Global -ErrorAction SilentlyContinue)) {
+        return
+    }
+
+    $state = $Global:PSCompletions
+    if ($null -eq $state.data -or $null -eq $state.data.alias) {
+        return
+    }
+
+    $keys = @($state.data.alias.Keys)
+    foreach ($key in $keys) {
+        $aliases = @($state.data.alias[$key])
+        $filtered = @(
+            foreach ($alias in $aliases) {
+                $text = [string]$alias
+                if ($text -match '[\\/]' -and ([System.IO.Path]::GetFileName($text) -ieq 'usbrelay.exe')) {
+                    continue
+                }
+
+                $alias
+            }
+        )
+
+        if ($filtered.Count -eq 0) {
+            $state.data.alias.Remove($key)
+        }
+        elseif ($filtered.Count -ne $aliases.Count) {
+            $state.data.alias[$key] = $filtered
+        }
+    }
+}
+
+Remove-UsbRelayPathAliasesFromPSCompletions
+
 $completionScript = {
     param($wordToComplete, $commandAst, $cursorPosition)
 

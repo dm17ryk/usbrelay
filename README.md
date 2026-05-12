@@ -100,6 +100,8 @@ The script also creates a session-local `usbrelay` alias to the `-CommandPath`
 target. Use that alias for completion instead of registering relative paths such
 as `.\usbrelay\bin\Debug\usbrelay.exe`; some PowerShell completion/menu modules
 build regular expressions from command names and do not escape backslashes.
+When loaded, the script also removes stale usbrelay path aliases from
+`PSCompletions` state if that module is present.
 
 Clink provides programmable completion for `cmd.exe`. Copy or link the Clink
 script into one of Clink's loaded script directories, then restart `cmd.exe` or

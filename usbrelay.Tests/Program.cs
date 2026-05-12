@@ -36,6 +36,7 @@ namespace usbrelay.Tests
                 Program_SelectStartupMode_UsesGuiForLongGuiArgument,
                 Program_SelectStartupMode_UsesGuiForLegacyGuiArgument,
                 Program_SelectStartupMode_UsesCliForCliArguments,
+                Program_HasInheritedConsoleProcessCount_UsesGuiSafeFallbackForFailure,
                 Program_ParseCliCommand_RecognizesHelpAliases,
                 Program_ParseCliCommand_RecognizesVersionAliases,
                 Program_ParseCliCommand_MapsLegacyRelayOptions,
@@ -46,6 +47,7 @@ namespace usbrelay.Tests
                 Program_CompletionSuggestsOnChannels,
                 Program_CompletionSuggestsOffChannels,
                 Program_CompletionSuggestsLegacyAliases,
+                Program_CompletionHandlesQuotedExecutablePath,
                 Program_HelpDoesNotShowCompletionCommand,
                 Program_NoArgumentTerminalRunPrintsUsageAndExits,
                 Program_HelpArgumentPrintsHelpAndExits,
@@ -208,6 +210,13 @@ namespace usbrelay.Tests
             AssertEqual("Cli", SelectStartupMode(new[] { "-list" }, true).ToString(), "CLI argument mode");
         }
 
+        private static void Program_HasInheritedConsoleProcessCount_UsesGuiSafeFallbackForFailure()
+        {
+            AssertFalse(HasInheritedConsoleProcessCount(0), "Failed console process query should not force inherited-console mode");
+            AssertFalse(HasInheritedConsoleProcessCount(1), "Single console process should be treated as standalone shell launch");
+            AssertTrue(HasInheritedConsoleProcessCount(2), "Multiple console processes should be treated as inherited terminal launch");
+        }
+
         private static void Program_ParseCliCommand_RecognizesHelpAliases()
         {
             AssertTrue(GetProperty<bool>(ParseCliCommand(new[] { "-h" }), "IsHelpRequested"), "-h should request help");
@@ -291,6 +300,14 @@ namespace usbrelay.Tests
             AssertContains(completions, "-off", "Legacy completions should include -off");
             AssertContains(completions, "-gui", "Legacy completions should include -gui");
             AssertContains(completions, "-v", "Legacy completions should include -v");
+        }
+
+        private static void Program_CompletionHandlesQuotedExecutablePath()
+        {
+            string[] completions = RunCompletion("\"C:\\Program Files\\usbrelay.exe\" --s");
+
+            AssertContains(completions, "--serial", "Quoted executable path completions should include --serial");
+            AssertContains(completions, "--status", "Quoted executable path completions should include --status");
         }
 
         private static void Program_HelpDoesNotShowCompletionCommand()
@@ -528,6 +545,14 @@ namespace usbrelay.Tests
             var method = programType.GetMethod("ParseCliCommand", BindingFlags.Static | BindingFlags.NonPublic);
             AssertTrue(method != null, "Program.ParseCliCommand should exist");
             return method.Invoke(null, new object[] { args });
+        }
+
+        private static bool HasInheritedConsoleProcessCount(uint processCount)
+        {
+            var consoleWindowType = typeof(MainForm).Assembly.GetType("usbrelay.ConsoleWindow", true);
+            var method = consoleWindowType.GetMethod("HasInheritedConsoleProcessCount", BindingFlags.Static | BindingFlags.NonPublic);
+            AssertTrue(method != null, "ConsoleWindow.HasInheritedConsoleProcessCount should exist");
+            return (bool)method.Invoke(null, new object[] { processCount });
         }
 
         private static T GetProperty<T>(object instance, string propertyName)

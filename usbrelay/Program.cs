@@ -11,6 +11,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.CommandLine;
 using System.CommandLine.Completions;
+using System.CommandLine.Parsing;
 using System.Windows.Forms;
 
 namespace usbrelay
@@ -20,26 +21,6 @@ namespace usbrelay
         enum Operations { NULL, LIST, STATUS, ONOFF };
         enum StartupMode { Cli, Gui };
         static readonly string[] ChannelCompletionValues = Enumerable.Range(1, 8).Select(channel => channel.ToString()).ToArray();
-        static readonly string[] CliCompletionOptions =
-        {
-            "--list",
-            "-list",
-            "--status",
-            "-status",
-            "--serial",
-            "-serial",
-            "--on",
-            "-on",
-            "--off",
-            "-off",
-            "--gui",
-            "-gui",
-            "-?",
-            "-h",
-            "--help",
-            "--version",
-            "-v"
-        };
 
         [STAThread]
         static int Main(string[] args)
@@ -60,12 +41,6 @@ namespace usbrelay
                 return StartupMode.Gui;
 
             return StartupMode.Cli;
-        }
-
-        static bool IsGuiArgument(string arg)
-        {
-            return string.Equals(arg, "--gui", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(arg, "-gui", StringComparison.OrdinalIgnoreCase);
         }
 
         static int RunGui()
@@ -194,6 +169,40 @@ namespace usbrelay
 
         static IEnumerable<string> GetCompletionSuggestions(string commandLine, int cursorPosition)
         {
+            CompletionInput input = CreateCompletionInput(commandLine, cursorPosition);
+            CliGrammar grammar = CreateCliGrammar();
+            ParseResult parseResult = grammar.RootCommand.Parse(input.ArgumentsText);
+
+            var parserCompletions = parseResult
+                .GetCompletions(input.CursorPosition)
+                .Select(completion => completion.Label)
+                .ToArray();
+
+            IEnumerable<string> completions = parserCompletions;
+            bool hasValueCompletions = false;
+            if (!input.WordToComplete.StartsWith("-", StringComparison.Ordinal))
+            {
+                var valueCompletions = parserCompletions
+                    .Where(completion => !completion.StartsWith("-", StringComparison.Ordinal) && !completion.StartsWith("/", StringComparison.Ordinal))
+                    .ToArray();
+                if (valueCompletions.Length > 0)
+                {
+                    completions = valueCompletions;
+                    hasValueCompletions = true;
+                }
+            }
+
+            if (!hasValueCompletions)
+                completions = completions.Concat(GetOptionAliasCompletions(grammar.RootCommand, input.WordToComplete));
+
+            return completions
+                .Where(completion => StartsWith(completion, input.WordToComplete))
+                .Distinct()
+                .OrderBy(completion => completion);
+        }
+
+        static CompletionInput CreateCompletionInput(string commandLine, int cursorPosition)
+        {
             if (commandLine == null)
                 commandLine = string.Empty;
 
@@ -203,52 +212,18 @@ namespace usbrelay
                 cursorPosition = commandLine.Length;
 
             string prefix = commandLine.Substring(0, cursorPosition);
-            bool endsWithWhitespace;
-            List<string> tokens = SplitCommandLine(prefix, out endsWithWhitespace);
-            RemoveCommandToken(tokens);
+            bool endsWithWhitespace = prefix.Length > 0 && char.IsWhiteSpace(prefix[prefix.Length - 1]);
+            List<string> tokens = CommandLineParser.SplitCommandLine(prefix).ToList();
+
+            if (tokens.Count > 0 && !tokens[0].StartsWith("-", StringComparison.Ordinal))
+                tokens.RemoveAt(0);
 
             string wordToComplete = endsWithWhitespace || tokens.Count == 0 ? string.Empty : tokens[tokens.Count - 1];
-            List<string> previousTokens = endsWithWhitespace
-                ? tokens
-                : tokens.Take(Math.Max(0, tokens.Count - 1)).ToList();
+            string argumentsText = string.Join(" ", tokens.Select(EscapeCompletionToken));
+            if (endsWithWhitespace && argumentsText.Length > 0)
+                argumentsText += " ";
 
-            if (IsCompletingChannelValue(previousTokens, wordToComplete))
-                return ChannelCompletionValues.Where(value => StartsWith(value, wordToComplete));
-
-            if (wordToComplete.Length == 0 || wordToComplete.StartsWith("-", StringComparison.Ordinal))
-                return CliCompletionOptions.Where(option => StartsWith(option, wordToComplete)).Distinct().OrderBy(option => option);
-
-            return Enumerable.Empty<string>();
-        }
-
-        static bool IsCompletingChannelValue(IEnumerable<string> previousTokens, string wordToComplete)
-        {
-            if (wordToComplete.StartsWith("-", StringComparison.Ordinal))
-                return false;
-
-            foreach (string token in previousTokens.Reverse())
-            {
-                if (IsChannelOption(token))
-                    return true;
-
-                if (IsOptionToken(token))
-                    return false;
-            }
-
-            return false;
-        }
-
-        static bool IsChannelOption(string token)
-        {
-            return string.Equals(token, "--on", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(token, "-on", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(token, "--off", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(token, "-off", StringComparison.OrdinalIgnoreCase);
-        }
-
-        static bool IsOptionToken(string token)
-        {
-            return token.StartsWith("-", StringComparison.Ordinal);
+            return new CompletionInput(argumentsText, argumentsText.Length, wordToComplete);
         }
 
         static bool StartsWith(string value, string prefix)
@@ -256,48 +231,29 @@ namespace usbrelay
             return value.StartsWith(prefix ?? string.Empty, StringComparison.OrdinalIgnoreCase);
         }
 
-        static void RemoveCommandToken(List<string> tokens)
+        static string EscapeCompletionToken(string token)
         {
-            if (tokens.Count == 0)
-                return;
+            if (token == null)
+                return string.Empty;
 
-            string token = tokens[0];
-            if (!token.StartsWith("-", StringComparison.Ordinal))
-                tokens.RemoveAt(0);
+            if (token.Length == 0)
+                return "\"\"";
+
+            if (!token.Any(char.IsWhiteSpace) && token.IndexOf('"') < 0)
+                return token;
+
+            return "\"" + token.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
         }
 
-        static List<string> SplitCommandLine(string commandLine, out bool endsWithWhitespace)
+        static IEnumerable<string> GetOptionAliasCompletions(Command command, string wordToComplete)
         {
-            endsWithWhitespace = commandLine.Length > 0 && char.IsWhiteSpace(commandLine[commandLine.Length - 1]);
-            var tokens = new List<string>();
-            var current = new System.Text.StringBuilder();
-            bool inQuotes = false;
+            if (!string.IsNullOrEmpty(wordToComplete) && !wordToComplete.StartsWith("-", StringComparison.Ordinal))
+                return Enumerable.Empty<string>();
 
-            foreach (char ch in commandLine)
-            {
-                if (ch == '"')
-                {
-                    inQuotes = !inQuotes;
-                    continue;
-                }
-
-                if (char.IsWhiteSpace(ch) && !inQuotes)
-                {
-                    if (current.Length > 0)
-                    {
-                        tokens.Add(current.ToString());
-                        current.Length = 0;
-                    }
-                    continue;
-                }
-
-                current.Append(ch);
-            }
-
-            if (current.Length > 0)
-                tokens.Add(current.ToString());
-
-            return tokens;
+            return command.Options
+                .SelectMany(option => new[] { option.Name }.Concat(option.Aliases))
+                .Where(alias => !string.IsNullOrEmpty(alias))
+                .Where(alias => StartsWith(alias, wordToComplete));
         }
 
         static ParsedCliCommand ParseCliCommand(string[] args)
@@ -418,6 +374,7 @@ namespace usbrelay
             var legacyOffOption = CreateHiddenChannelOption("-off");
             var guiOption = CreateBoolOption("--gui", "Start the graphical user interface from a terminal.");
             var legacyGuiOption = CreateHiddenBoolOption("-gui");
+            var legacyVersionOption = CreateHiddenBoolOption("-v");
             var completionCommand = CreateCompletionCommand();
             var rootCommand = new RootCommand("A simple utility to control, list, and query USB relay devices.");
             rootCommand.Options.Add(listOption);
@@ -432,6 +389,7 @@ namespace usbrelay
             rootCommand.Options.Add(legacyOffOption);
             rootCommand.Options.Add(guiOption);
             rootCommand.Options.Add(legacyGuiOption);
+            rootCommand.Options.Add(legacyVersionOption);
             rootCommand.Subcommands.Add(completionCommand);
             rootCommand.SetAction(parseResult => 0);
 
@@ -550,6 +508,20 @@ namespace usbrelay
             public Option<int[]> LegacyOffOption { get; private set; }
             public Option<bool> GuiOption { get; private set; }
             public Option<bool> LegacyGuiOption { get; private set; }
+        }
+
+        sealed class CompletionInput
+        {
+            public CompletionInput(string argumentsText, int cursorPosition, string wordToComplete)
+            {
+                ArgumentsText = argumentsText;
+                CursorPosition = cursorPosition;
+                WordToComplete = wordToComplete ?? string.Empty;
+            }
+
+            public string ArgumentsText { get; private set; }
+            public int CursorPosition { get; private set; }
+            public string WordToComplete { get; private set; }
         }
 
         sealed class ParsedCliCommand
