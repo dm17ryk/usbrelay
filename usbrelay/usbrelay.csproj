@@ -2,6 +2,7 @@
 <Project ToolsVersion="14.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="..\packages\Costura.Fody.5.4.0\build\Costura.Fody.props" Condition="Exists('..\packages\Costura.Fody.5.4.0\build\Costura.Fody.props')" />
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <Import Project="..\Version.props" Condition="Exists('..\Version.props')" />
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
@@ -14,6 +15,7 @@
     <FileAlignment>512</FileAlignment>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <TargetFrameworkProfile />
+    <GeneratedAssemblyVersionFile>obj\$(Configuration)\GeneratedAssemblyVersion.cs</GeneratedAssemblyVersionFile>
     <NuGetPackageImportStamp>
     </NuGetPackageImportStamp>
   </PropertyGroup>
@@ -233,6 +235,7 @@
     <Compile Include="UsbRelayCli.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="$(GeneratedAssemblyVersionFile)" />
     <Compile Include="UsbRelayDeviceHelper.cs" />
     <None Include="app.config" />
     <None Include="packages.config" />
@@ -281,6 +284,22 @@
     </PackageReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <Target Name="GenerateUsbRelayAssemblyVersion" BeforeTargets="BeforeCompile">
+    <Error Condition="'$(UsbRelayVersion)' == ''" Text="UsbRelayVersion is not defined. Ensure ..\Version.props exists." />
+    <ItemGroup>
+      <UsbRelayGeneratedAssemblyInfo Include="using System.Reflection%3B" />
+      <UsbRelayGeneratedAssemblyInfo Include="[assembly: AssemblyTitle(&quot;$(UsbRelayAssemblyTitle)&quot;)]" />
+      <UsbRelayGeneratedAssemblyInfo Include="[assembly: AssemblyDescription(&quot;$(UsbRelayDescription)&quot;)]" />
+      <UsbRelayGeneratedAssemblyInfo Include="[assembly: AssemblyCompany(&quot;$(UsbRelayCompany)&quot;)]" />
+      <UsbRelayGeneratedAssemblyInfo Include="[assembly: AssemblyProduct(&quot;$(UsbRelayProduct)&quot;)]" />
+      <UsbRelayGeneratedAssemblyInfo Include="[assembly: AssemblyCopyright(&quot;$(UsbRelayCopyright)&quot;)]" />
+      <UsbRelayGeneratedAssemblyInfo Include="[assembly: AssemblyVersion(&quot;$(UsbRelayVersion)&quot;)]" />
+      <UsbRelayGeneratedAssemblyInfo Include="[assembly: AssemblyFileVersion(&quot;$(UsbRelayVersion)&quot;)]" />
+      <UsbRelayGeneratedAssemblyInfo Include="[assembly: AssemblyInformationalVersion(&quot;$(UsbRelayVersion)&quot;)]" />
+    </ItemGroup>
+    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(GeneratedAssemblyVersionFile)'))" />
+    <WriteLinesToFile File="$(GeneratedAssemblyVersionFile)" Lines="@(UsbRelayGeneratedAssemblyInfo)" Overwrite="true" Encoding="UTF-8" />
+  </Target>
   <Import Project="..\packages\Fody.6.5.2\build\Fody.targets" Condition="Exists('..\packages\Fody.6.5.2\build\Fody.targets')" />
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
     <PropertyGroup>
