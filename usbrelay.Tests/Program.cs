@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using usbrelay.Sequences;
@@ -30,6 +31,26 @@ namespace usbrelay.Tests
                 SequenceResourceLocks_BlockOverlappingChannelsOnly,
                 SequenceRunner_ExecutesRegexSuccessBranchWithFakeRelayAndTool,
                 ProcessExternalToolRunner_DoesNotDeadlockWhenStderrPipeFills,
+                Program_SelectStartupMode_UsesCliForTerminalWithoutArguments,
+                Program_SelectStartupMode_UsesGuiForNonTerminalWithoutArguments,
+                Program_SelectStartupMode_UsesGuiForLongGuiArgument,
+                Program_SelectStartupMode_UsesGuiForLegacyGuiArgument,
+                Program_SelectStartupMode_UsesCliForCliArguments,
+                Program_ParseCliCommand_RecognizesHelpAliases,
+                Program_ParseCliCommand_RecognizesVersionAliases,
+                Program_ParseCliCommand_MapsLegacyRelayOptions,
+                Program_ParseCliCommand_ParsesMultiValueChannels,
+                Program_ParseCliCommand_RejectsGuiWithRelayOptions,
+                Program_CompletionSuggestsTopLevelOptions,
+                Program_CompletionSuggestsMatchingOptions,
+                Program_CompletionSuggestsOnChannels,
+                Program_CompletionSuggestsOffChannels,
+                Program_CompletionSuggestsLegacyAliases,
+                Program_HelpDoesNotShowCompletionCommand,
+                Program_NoArgumentTerminalRunPrintsUsageAndExits,
+                Program_HelpArgumentPrintsHelpAndExits,
+                Program_HelpArgumentPrintsExamples,
+                Program_VersionArgumentPrintsVersionAndExits,
                 MainForm_LoadsSavedSequencesIntoVisibleRows,
                 MainForm_RunButtonClickExecutesVisibleSequence,
                 MainForm_AllOffRefreshesDevicesOnceAfterChannelUpdates,
@@ -160,6 +181,165 @@ namespace usbrelay.Tests
             AssertEqual(0, task.Result.ExitCode, "External tool exit code");
             AssertTrue(task.Result.Output.Contains("stdout-done"), "External tool stdout should be captured");
             AssertTrue(task.Result.Output.Length > 200000, "External tool stderr should be captured");
+        }
+
+        private static void Program_SelectStartupMode_UsesCliForTerminalWithoutArguments()
+        {
+            AssertEqual("Cli", SelectStartupMode(new string[0], true).ToString(), "Terminal no-argument mode");
+        }
+
+        private static void Program_SelectStartupMode_UsesGuiForNonTerminalWithoutArguments()
+        {
+            AssertEqual("Gui", SelectStartupMode(new string[0], false).ToString(), "Non-terminal no-argument mode");
+        }
+
+        private static void Program_SelectStartupMode_UsesGuiForLongGuiArgument()
+        {
+            AssertEqual("Gui", SelectStartupMode(new[] { "--gui" }, true).ToString(), "Long GUI argument mode");
+        }
+
+        private static void Program_SelectStartupMode_UsesGuiForLegacyGuiArgument()
+        {
+            AssertEqual("Gui", SelectStartupMode(new[] { "-gui" }, true).ToString(), "Legacy GUI argument mode");
+        }
+
+        private static void Program_SelectStartupMode_UsesCliForCliArguments()
+        {
+            AssertEqual("Cli", SelectStartupMode(new[] { "-list" }, true).ToString(), "CLI argument mode");
+        }
+
+        private static void Program_ParseCliCommand_RecognizesHelpAliases()
+        {
+            AssertTrue(GetProperty<bool>(ParseCliCommand(new[] { "-h" }), "IsHelpRequested"), "-h should request help");
+            AssertTrue(GetProperty<bool>(ParseCliCommand(new[] { "--help" }), "IsHelpRequested"), "--help should request help");
+            AssertTrue(GetProperty<bool>(ParseCliCommand(new[] { "-?" }), "IsHelpRequested"), "-? should request help");
+        }
+
+        private static void Program_ParseCliCommand_RecognizesVersionAliases()
+        {
+            AssertTrue(GetProperty<bool>(ParseCliCommand(new[] { "-v" }), "IsVersionRequested"), "-v should request version");
+            AssertTrue(GetProperty<bool>(ParseCliCommand(new[] { "--version" }), "IsVersionRequested"), "--version should request version");
+        }
+
+        private static void Program_ParseCliCommand_MapsLegacyRelayOptions()
+        {
+            object command = ParseCliCommand(new[] { "-serial", "BITFT", "-on", "1", "2", "-off", "3" });
+
+            AssertEqual("BITFT", GetProperty<string>(command, "Serial"), "Serial option");
+            AssertEqual("ONOFF", GetProperty<object>(command, "Operation").ToString(), "Relay operation");
+            AssertSequence(new[] { 1, 2 }, GetProperty<IEnumerable<int>>(command, "OnChannels"), "On channels");
+            AssertSequence(new[] { 3 }, GetProperty<IEnumerable<int>>(command, "OffChannels"), "Off channels");
+        }
+
+        private static void Program_ParseCliCommand_ParsesMultiValueChannels()
+        {
+            object command = ParseCliCommand(new[] { "--on", "1", "2", "3", "--off", "4", "5" });
+
+            AssertEqual("ONOFF", GetProperty<object>(command, "Operation").ToString(), "Relay operation");
+            AssertSequence(new[] { 1, 2, 3 }, GetProperty<IEnumerable<int>>(command, "OnChannels"), "On channels");
+            AssertSequence(new[] { 4, 5 }, GetProperty<IEnumerable<int>>(command, "OffChannels"), "Off channels");
+        }
+
+        private static void Program_ParseCliCommand_RejectsGuiWithRelayOptions()
+        {
+            object command = ParseCliCommand(new[] { "--gui", "-list" });
+
+            AssertFalse(GetProperty<bool>(command, "IsValid"), "GUI mixed with relay options should be invalid");
+            AssertTrue(GetProperty<IEnumerable<string>>(command, "Errors").Any(error => error.Contains("--gui")), "GUI conflict error should mention --gui");
+        }
+
+        private static void Program_CompletionSuggestsTopLevelOptions()
+        {
+            string[] completions = RunCompletion("usbrelay --");
+
+            AssertContains(completions, "--list", "Top-level completions should include --list");
+            AssertContains(completions, "--status", "Top-level completions should include --status");
+            AssertContains(completions, "--serial", "Top-level completions should include --serial");
+            AssertContains(completions, "--gui", "Top-level completions should include --gui");
+        }
+
+        private static void Program_CompletionSuggestsMatchingOptions()
+        {
+            string[] completions = RunCompletion("usbrelay --s");
+
+            AssertContains(completions, "--serial", "--s completions should include --serial");
+            AssertContains(completions, "--status", "--s completions should include --status");
+            AssertFalse(completions.Contains("--list"), "--s completions should not include --list");
+        }
+
+        private static void Program_CompletionSuggestsOnChannels()
+        {
+            string[] completions = RunCompletion("usbrelay --on ");
+
+            AssertSequence(new[] { "1", "2", "3", "4", "5", "6", "7", "8" }, completions, "--on channel completions");
+        }
+
+        private static void Program_CompletionSuggestsOffChannels()
+        {
+            string[] completions = RunCompletion("usbrelay --serial BITFT --off ");
+
+            AssertSequence(new[] { "1", "2", "3", "4", "5", "6", "7", "8" }, completions, "--off channel completions");
+        }
+
+        private static void Program_CompletionSuggestsLegacyAliases()
+        {
+            string[] completions = RunCompletion("usbrelay -");
+
+            AssertContains(completions, "-list", "Legacy completions should include -list");
+            AssertContains(completions, "-serial", "Legacy completions should include -serial");
+            AssertContains(completions, "-on", "Legacy completions should include -on");
+            AssertContains(completions, "-off", "Legacy completions should include -off");
+            AssertContains(completions, "-gui", "Legacy completions should include -gui");
+            AssertContains(completions, "-v", "Legacy completions should include -v");
+        }
+
+        private static void Program_HelpDoesNotShowCompletionCommand()
+        {
+            ProcessResult result = RunUsbRelay("--help");
+
+            AssertEqual(0, result.ExitCode, "--help exit code");
+            AssertFalse(result.Output.Contains("complete"), "Hidden complete command should not be shown in help");
+        }
+
+        private static void Program_NoArgumentTerminalRunPrintsUsageAndExits()
+        {
+            ProcessResult result = RunUsbRelay();
+
+            AssertEqual(0, result.ExitCode, "No-argument terminal exit code");
+            AssertTrue(result.Output.Contains("Usage:"), "No-argument terminal run should print generated help");
+            AssertTrue(result.Output.Contains("--gui"), "No-argument terminal usage should document --gui");
+            AssertTrue(result.Output.Contains("Examples:"), "No-argument terminal usage should include examples");
+            AssertEqual(string.Empty, result.Error, "No-argument terminal stderr");
+        }
+
+        private static void Program_HelpArgumentPrintsHelpAndExits()
+        {
+            ProcessResult result = RunUsbRelay("-h");
+
+            AssertEqual(0, result.ExitCode, "-h exit code");
+            AssertTrue(result.Output.Contains("Usage:"), "-h should print generated help");
+            AssertTrue(result.Output.Contains("--version"), "Help should include version option");
+            AssertEqual(string.Empty, result.Error, "-h stderr");
+        }
+
+        private static void Program_HelpArgumentPrintsExamples()
+        {
+            ProcessResult result = RunUsbRelay("--help");
+
+            AssertEqual(0, result.ExitCode, "--help exit code");
+            AssertTrue(result.Output.Contains("Examples:"), "--help should include examples");
+            AssertTrue(result.Output.Contains("usbrelay --list"), "Help should include list example");
+            AssertTrue(result.Output.Contains("usbrelay --serial BITFT --on 1 2 3"), "Help should include multi-channel on example");
+            AssertTrue(result.Output.Contains("usbrelay --gui"), "Help should include GUI example");
+        }
+
+        private static void Program_VersionArgumentPrintsVersionAndExits()
+        {
+            ProcessResult result = RunUsbRelay("-v");
+
+            AssertEqual(0, result.ExitCode, "-v exit code");
+            AssertTrue(result.Output.Contains("1.0.0.2"), "-v should print assembly version");
+            AssertEqual(string.Empty, result.Error, "-v stderr");
         }
 
         private static void MainForm_LoadsSavedSequencesIntoVisibleRows()
@@ -334,6 +514,63 @@ namespace usbrelay.Tests
             return instance.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(instance);
         }
 
+        private static object SelectStartupMode(string[] args, bool hasInheritedConsole)
+        {
+            var programType = typeof(MainForm).Assembly.GetType("usbrelay.Program", true);
+            var method = programType.GetMethod("SelectStartupMode", BindingFlags.Static | BindingFlags.NonPublic);
+            AssertTrue(method != null, "Program.SelectStartupMode should exist");
+            return method.Invoke(null, new object[] { args, hasInheritedConsole });
+        }
+
+        private static object ParseCliCommand(string[] args)
+        {
+            var programType = typeof(MainForm).Assembly.GetType("usbrelay.Program", true);
+            var method = programType.GetMethod("ParseCliCommand", BindingFlags.Static | BindingFlags.NonPublic);
+            AssertTrue(method != null, "Program.ParseCliCommand should exist");
+            return method.Invoke(null, new object[] { args });
+        }
+
+        private static T GetProperty<T>(object instance, string propertyName)
+        {
+            return (T)instance.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic).GetValue(instance);
+        }
+
+        private static string[] RunCompletion(string commandLine)
+        {
+            ProcessResult result = RunUsbRelay("complete", "--position", commandLine.Length.ToString(), "--line", commandLine);
+
+            AssertEqual(0, result.ExitCode, "Completion exit code");
+            AssertEqual(string.Empty, result.Error, "Completion stderr");
+            return result.Output
+                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+        }
+
+        private static ProcessResult RunUsbRelay(params string[] args)
+        {
+            string executablePath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "usbrelay.exe");
+            var startInfo = new ProcessStartInfo(executablePath)
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                Arguments = string.Join(" ", args.Select(EscapeProcessArgument))
+            };
+
+            using (var process = Process.Start(startInfo))
+            {
+                if (!process.WaitForExit(5000))
+                {
+                    try { process.Kill(); } catch { }
+                    throw new InvalidOperationException("usbrelay process did not exit: " + startInfo.Arguments);
+                }
+
+                return new ProcessResult(
+                    process.ExitCode,
+                    process.StandardOutput.ReadToEnd(),
+                    process.StandardError.ReadToEnd());
+            }
+        }
+
         private static void AssertEqual<T>(T expected, T actual, string name)
         {
             if (!EqualityComparer<T>.Default.Equals(expected, actual))
@@ -350,6 +587,58 @@ namespace usbrelay.Tests
         {
             if (value)
                 throw new InvalidOperationException(name);
+        }
+
+        private static void AssertContains<T>(IEnumerable<T> values, T expected, string name)
+        {
+            if (!values.Contains(expected))
+                throw new InvalidOperationException(name);
+        }
+
+        private static void AssertSequence<T>(IEnumerable<T> expected, IEnumerable<T> actual, string name)
+        {
+            string expectedText = string.Join(", ", expected);
+            string actualText = string.Join(", ", actual);
+            if (expectedText != actualText)
+                throw new InvalidOperationException(name + " expected [" + expectedText + "] but was [" + actualText + "]");
+        }
+
+        private static string EscapeProcessArgument(string argument)
+        {
+            if (string.IsNullOrEmpty(argument))
+                return "\"\"";
+
+            bool needsQuotes = argument.Any(char.IsWhiteSpace) || argument.Contains("\"");
+            if (!needsQuotes)
+                return argument;
+
+            var escaped = new StringBuilder();
+            escaped.Append('"');
+            int backslashes = 0;
+            foreach (char ch in argument)
+            {
+                if (ch == '\\')
+                {
+                    backslashes++;
+                    continue;
+                }
+
+                if (ch == '"')
+                {
+                    escaped.Append('\\', backslashes * 2 + 1);
+                    escaped.Append(ch);
+                    backslashes = 0;
+                    continue;
+                }
+
+                escaped.Append('\\', backslashes);
+                backslashes = 0;
+                escaped.Append(ch);
+            }
+
+            escaped.Append('\\', backslashes * 2);
+            escaped.Append('"');
+            return escaped.ToString();
         }
 
         private static void WaitUntil(Func<bool> condition, string failure)
@@ -384,6 +673,20 @@ namespace usbrelay.Tests
                     process.Dispose();
                 }
             }
+        }
+
+        private sealed class ProcessResult
+        {
+            public ProcessResult(int exitCode, string output, string error)
+            {
+                ExitCode = exitCode;
+                Output = output;
+                Error = error;
+            }
+
+            public int ExitCode { get; }
+            public string Output { get; }
+            public string Error { get; }
         }
     }
 }
