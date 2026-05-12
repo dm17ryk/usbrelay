@@ -265,6 +265,7 @@ namespace usbrelay.Tests
             AssertContains(completions, "--status", "Top-level completions should include --status");
             AssertContains(completions, "--serial", "Top-level completions should include --serial");
             AssertContains(completions, "--gui", "Top-level completions should include --gui");
+            AssertFalse(completions.Contains("list"), "Top-level completions should not include bare option names");
         }
 
         private static void Program_CompletionSuggestsMatchingOptions()
@@ -353,9 +354,10 @@ namespace usbrelay.Tests
         private static void Program_VersionArgumentPrintsVersionAndExits()
         {
             ProcessResult result = RunUsbRelay("-v");
+            string expectedVersion = typeof(MainForm).Assembly.GetName().Version.ToString();
 
             AssertEqual(0, result.ExitCode, "-v exit code");
-            AssertTrue(result.Output.Contains("1.0.0.2"), "-v should print assembly version");
+            AssertTrue(result.Output.Contains(expectedVersion), "-v should print assembly version");
             AssertEqual(string.Empty, result.Error, "-v stderr");
         }
 
@@ -541,9 +543,9 @@ namespace usbrelay.Tests
 
         private static object ParseCliCommand(string[] args)
         {
-            var programType = typeof(MainForm).Assembly.GetType("usbrelay.Program", true);
-            var method = programType.GetMethod("ParseCliCommand", BindingFlags.Static | BindingFlags.NonPublic);
-            AssertTrue(method != null, "Program.ParseCliCommand should exist");
+            var programType = typeof(MainForm).Assembly.GetType("usbrelay.UsbRelayCli", true);
+            var method = programType.GetMethod("ParseCommand", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+            AssertTrue(method != null, "UsbRelayCli.ParseCommand should exist");
             return method.Invoke(null, new object[] { args });
         }
 

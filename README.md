@@ -48,15 +48,15 @@ Current version is implemented in C# (VS2019). Porting to other platforms should
 
 ```
 Description:
-  A simple utility to control, list, and query USB relay devices.
+  A simple utility to control, list, and query USB-Relay devices.
 
 Usage:
   usbrelay [options]
 
 Options:
-  --list             List all available serial numbers of connected USB relay devices.
-  --status           Display relay channel status for connected USB relay devices.
-  --serial <serial>  Specify the serial number of the USB relay device to operate.
+  --list             List all available serial numbers of connected USB-Relay devices.
+  --status           Display relay channel status for connected USB-Relay devices.
+  --serial <serial>  Specify the serial number of the USB-Relay device to operate.
   --on <on>          Turn on the relay channels specified.
   --off <off>        Turn off the relay channels specified.
   --gui              Start the graphical user interface from a terminal.
