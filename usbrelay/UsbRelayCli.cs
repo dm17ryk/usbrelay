@@ -11,6 +11,9 @@ namespace usbrelay
             if (IsCompletionRequest(args))
                 return RunCompletion(args);
 
+            if (IsSequenceRequest(args))
+                return RunSequenceCommand(args);
+
             if (args.Length < 1)
             {
                 PrintHelpWithExamples();
@@ -51,7 +54,7 @@ namespace usbrelay
             return 0;
         }
 
-        public static ParsedCliCommand ParseCommand(string[] args)
+        internal static ParsedCliCommand ParseCommand(string[] args)
         {
             string[] normalizedArgs = NormalizeArguments(args);
             CliGrammar grammar = CliGrammar.Current;
@@ -106,6 +109,75 @@ namespace usbrelay
             return args.Length > 0 && string.Equals(args[0], "complete", StringComparison.OrdinalIgnoreCase);
         }
 
+        private static bool IsSequenceRequest(string[] args)
+        {
+            return args.Length > 0 && string.Equals(args[0], "sequence", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static int RunSequenceCommand(string[] args)
+        {
+            if (args.Any(IsHelpArgument))
+                return InvokeSystemCommandLine(args);
+
+            if (args.Length < 2)
+            {
+                Console.Error.WriteLine("Usage: usbrelay sequence <query|status|run> [--name <name>]");
+                return 1;
+            }
+
+            string name;
+            if (!TryReadNameOption(args, 2, out name))
+                return 1;
+
+            var sequences = new SequenceCli();
+            string command = args[1];
+            if (string.Equals(command, "query", StringComparison.OrdinalIgnoreCase))
+                return sequences.Query(name, ShouldWriteInteractiveSequenceSeparator(command, Console.IsOutputRedirected));
+
+            if (string.Equals(command, "status", StringComparison.OrdinalIgnoreCase))
+                return sequences.Status(name, ShouldWriteInteractiveSequenceSeparator(command, Console.IsOutputRedirected));
+
+            if (string.Equals(command, "run", StringComparison.OrdinalIgnoreCase))
+                return sequences.Run(name, ShouldWriteInteractiveSequenceSeparator(command, Console.IsOutputRedirected));
+
+            Console.Error.WriteLine("Unknown sequence command: " + command);
+            return 1;
+        }
+
+        private static bool ShouldWriteInteractiveSequenceSeparator(string command, bool outputRedirected)
+        {
+            if (outputRedirected)
+                return false;
+
+            return string.Equals(command, "query", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(command, "status", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(command, "run", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool TryReadNameOption(string[] args, int startIndex, out string name)
+        {
+            name = null;
+            for (int i = startIndex; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], "--name", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (i + 1 >= args.Length || string.IsNullOrWhiteSpace(args[i + 1]))
+                    {
+                        Console.Error.WriteLine("--name requires a value.");
+                        return false;
+                    }
+
+                    name = args[++i];
+                    continue;
+                }
+
+                Console.Error.WriteLine("Unexpected sequence argument: " + args[i]);
+                return false;
+            }
+
+            return true;
+        }
+
         private static int RunCompletion(string[] args)
         {
             string line;
@@ -134,6 +206,9 @@ namespace usbrelay
             Console.WriteLine("  usbrelay --serial BITFT --off 2");
             Console.WriteLine("  usbrelay --serial BITFT --on 1 3 5 --off 2 4 6");
             Console.WriteLine("  usbrelay --gui");
+            Console.WriteLine("  usbrelay sequence query");
+            Console.WriteLine("  usbrelay sequence status --name \"Power cycle DUT\"");
+            Console.WriteLine("  usbrelay sequence run --name \"Power cycle DUT\"");
         }
 
         private static int InvokeSystemCommandLine(string[] args)

@@ -90,6 +90,7 @@ namespace usbrelay
             var legacyGuiOption = CreateHiddenBoolOption("-gui");
             var legacyVersionOption = CreateHiddenBoolOption("-v");
             var completionCommand = CreateCompletionCommand();
+            var sequenceCommand = CreateSequenceCommand();
             var rootCommand = new RootCommand("A simple utility to control, list, and query USB-Relay devices.");
             rootCommand.Options.Add(listOption);
             rootCommand.Options.Add(legacyListOption);
@@ -104,6 +105,7 @@ namespace usbrelay
             rootCommand.Options.Add(guiOption);
             rootCommand.Options.Add(legacyGuiOption);
             rootCommand.Options.Add(legacyVersionOption);
+            rootCommand.Subcommands.Add(sequenceCommand);
             rootCommand.Subcommands.Add(completionCommand);
             rootCommand.SetAction(parseResult => 0);
 
@@ -172,6 +174,48 @@ namespace usbrelay
                 Description = "Cursor position within the command line.",
                 Required = true
             });
+            command.SetAction(parseResult => 0);
+            return command;
+        }
+
+        private static Command CreateSequenceCommand()
+        {
+            var command = new Command("sequence", "Query, validate, and run saved GUI sequences.");
+
+            var queryNameOption = new Option<string>("--name")
+            {
+                Description = "Saved sequence name."
+            };
+            var queryCommand = new Command("query", "List saved sequences or show one sequence.")
+            {
+                Options = { queryNameOption }
+            };
+            queryCommand.SetAction(parseResult => 0);
+
+            var statusNameOption = new Option<string>("--name")
+            {
+                Description = "Saved sequence name."
+            };
+            var statusCommand = new Command("status", "Validate saved sequence readiness.")
+            {
+                Options = { statusNameOption }
+            };
+            statusCommand.SetAction(parseResult => 0);
+
+            var runNameOption = new Option<string>("--name")
+            {
+                Description = "Saved sequence name.",
+                Required = true
+            };
+            var runCommand = new Command("run", "Run a saved sequence.")
+            {
+                Options = { runNameOption }
+            };
+            runCommand.SetAction(parseResult => 0);
+
+            command.Subcommands.Add(queryCommand);
+            command.Subcommands.Add(statusCommand);
+            command.Subcommands.Add(runCommand);
             command.SetAction(parseResult => 0);
             return command;
         }
