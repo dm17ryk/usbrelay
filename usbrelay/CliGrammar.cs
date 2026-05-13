@@ -23,7 +23,14 @@ namespace usbrelay
             Option<int[]> offOption,
             Option<int[]> legacyOffOption,
             Option<bool> guiOption,
-            Option<bool> legacyGuiOption)
+            Option<bool> legacyGuiOption,
+            Command sequenceCommand,
+            Command sequenceQueryCommand,
+            Command sequenceStatusCommand,
+            Command sequenceRunCommand,
+            Option<string> sequenceQueryNameOption,
+            Option<string> sequenceStatusNameOption,
+            Option<string> sequenceRunNameOption)
         {
             RootCommand = rootCommand;
             ListOption = listOption;
@@ -38,6 +45,13 @@ namespace usbrelay
             LegacyOffOption = legacyOffOption;
             GuiOption = guiOption;
             LegacyGuiOption = legacyGuiOption;
+            SequenceCommand = sequenceCommand;
+            SequenceQueryCommand = sequenceQueryCommand;
+            SequenceStatusCommand = sequenceStatusCommand;
+            SequenceRunCommand = sequenceRunCommand;
+            SequenceQueryNameOption = sequenceQueryNameOption;
+            SequenceStatusNameOption = sequenceStatusNameOption;
+            SequenceRunNameOption = sequenceRunNameOption;
         }
 
         public static CliGrammar Current { get { return Cached.Value; } }
@@ -55,6 +69,13 @@ namespace usbrelay
         public Option<int[]> LegacyOffOption { get; private set; }
         public Option<bool> GuiOption { get; private set; }
         public Option<bool> LegacyGuiOption { get; private set; }
+        public Command SequenceCommand { get; private set; }
+        public Command SequenceQueryCommand { get; private set; }
+        public Command SequenceStatusCommand { get; private set; }
+        public Command SequenceRunCommand { get; private set; }
+        public Option<string> SequenceQueryNameOption { get; private set; }
+        public Option<string> SequenceStatusNameOption { get; private set; }
+        public Option<string> SequenceRunNameOption { get; private set; }
 
         private static CliGrammar Create()
         {
@@ -90,7 +111,19 @@ namespace usbrelay
             var legacyGuiOption = CreateHiddenBoolOption("-gui");
             var legacyVersionOption = CreateHiddenBoolOption("-v");
             var completionCommand = CreateCompletionCommand();
-            var sequenceCommand = CreateSequenceCommand();
+            Command sequenceQueryCommand;
+            Command sequenceStatusCommand;
+            Command sequenceRunCommand;
+            Option<string> sequenceQueryNameOption;
+            Option<string> sequenceStatusNameOption;
+            Option<string> sequenceRunNameOption;
+            var sequenceCommand = CreateSequenceCommand(
+                out sequenceQueryCommand,
+                out sequenceStatusCommand,
+                out sequenceRunCommand,
+                out sequenceQueryNameOption,
+                out sequenceStatusNameOption,
+                out sequenceRunNameOption);
             var rootCommand = new RootCommand("A simple utility to control, list, and query USB-Relay devices.");
             rootCommand.Options.Add(listOption);
             rootCommand.Options.Add(legacyListOption);
@@ -122,7 +155,14 @@ namespace usbrelay
                 offOption,
                 legacyOffOption,
                 guiOption,
-                legacyGuiOption);
+                legacyGuiOption,
+                sequenceCommand,
+                sequenceQueryCommand,
+                sequenceStatusCommand,
+                sequenceRunCommand,
+                sequenceQueryNameOption,
+                sequenceStatusNameOption,
+                sequenceRunNameOption);
         }
 
         private static Option<bool> CreateBoolOption(string name, string description)
@@ -178,36 +218,42 @@ namespace usbrelay
             return command;
         }
 
-        private static Command CreateSequenceCommand()
+        private static Command CreateSequenceCommand(
+            out Command queryCommand,
+            out Command statusCommand,
+            out Command runCommand,
+            out Option<string> queryNameOption,
+            out Option<string> statusNameOption,
+            out Option<string> runNameOption)
         {
             var command = new Command("sequence", "Query, validate, and run saved GUI sequences.");
 
-            var queryNameOption = new Option<string>("--name")
+            queryNameOption = new Option<string>("--name")
             {
                 Description = "Saved sequence name."
             };
-            var queryCommand = new Command("query", "List saved sequences or show one sequence.")
+            queryCommand = new Command("query", "List saved sequences or show one sequence.")
             {
                 Options = { queryNameOption }
             };
             queryCommand.SetAction(parseResult => 0);
 
-            var statusNameOption = new Option<string>("--name")
+            statusNameOption = new Option<string>("--name")
             {
                 Description = "Saved sequence name."
             };
-            var statusCommand = new Command("status", "Validate saved sequence readiness.")
+            statusCommand = new Command("status", "Validate saved sequence readiness.")
             {
                 Options = { statusNameOption }
             };
             statusCommand.SetAction(parseResult => 0);
 
-            var runNameOption = new Option<string>("--name")
+            runNameOption = new Option<string>("--name")
             {
                 Description = "Saved sequence name.",
                 Required = true
             };
-            var runCommand = new Command("run", "Run a saved sequence.")
+            runCommand = new Command("run", "Run a saved sequence.")
             {
                 Options = { runNameOption }
             };

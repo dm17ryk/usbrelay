@@ -52,7 +52,7 @@ namespace usbrelay
 
             if (sequences.Count == 0)
             {
-                output.WriteLine("No saved sequences.");
+                output.Write(PrefixCleanLine("No saved sequences." + Environment.NewLine, startOnCleanLine));
                 return 0;
             }
 
@@ -106,7 +106,7 @@ namespace usbrelay
             }
             catch (Exception ex)
             {
-                error.WriteLine("Failed to enumerate relay devices: " + ex.Message);
+                WriteException("Failed to enumerate relay devices.", ex);
                 return 1;
             }
 
@@ -184,7 +184,18 @@ namespace usbrelay
 
         private bool TrySelectSequences(string name, out IReadOnlyList<SequenceDefinition> selected)
         {
-            IReadOnlyList<SequenceDefinition> sequences = repository.Load();
+            IReadOnlyList<SequenceDefinition> sequences;
+            try
+            {
+                sequences = repository.Load();
+            }
+            catch (Exception ex)
+            {
+                selected = new SequenceDefinition[0];
+                WriteException("Failed to load sequences from repository.", ex);
+                return false;
+            }
+
             if (string.IsNullOrWhiteSpace(name))
             {
                 selected = sequences;
@@ -211,6 +222,12 @@ namespace usbrelay
 
             selected = matches;
             return true;
+        }
+
+        private void WriteException(string message, Exception ex)
+        {
+            error.WriteLine(message + " " + ex.Message + " (" + ex.GetType().FullName + ")");
+            error.WriteLine(ex.ToString());
         }
 
         private static string BuildDetails(SequenceDefinition sequence)

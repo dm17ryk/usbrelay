@@ -65,12 +65,16 @@ namespace usbrelay.Tests
                 Program_AssemblyVersionMatchesVersionProps,
                 Program_ProjectBuildsAsWindowsGuiExecutable,
                 Program_SequenceQueryUsesInteractiveOutputSeparator,
+                Program_SequenceRunRequiresNameThroughGrammar,
+                Program_SequenceCommandRejectsUnexpectedArgumentThroughGrammar,
                 Program_ReopenedConsoleUtf8EncodingDoesNotEmitPreamble,
+                Program_ReopenedConsoleUtf8EncodingPreservesFallbacks,
                 SequenceCli_QueryListsSavedSequences,
                 SequenceCli_QueryByNamePrintsDetails,
                 SequenceCli_QueryTableHasSeparatorLine,
                 SequenceCli_StatusReportsReadySequence,
                 SequenceCli_StatusFailsWhenRelayResourceIsMissing,
+                SequenceCli_StatusReportsRelayEnumerationFailureDetails,
                 SequenceCli_QueryWritesSummaryInSingleOutputCall,
                 SequenceCli_QueryCleanLinePrefixIsPartOfSingleOutputCall,
                 SequenceCli_QueryByNameWritesDetailInSingleOutputCall,
@@ -79,6 +83,7 @@ namespace usbrelay.Tests
                 SequenceCli_RunExecutesSavedSequence,
                 SequenceCli_RunCleanLinePrefixPrecedesStartedLine,
                 SequenceCli_RunFailsForInvalidMissingOrDuplicateName,
+                SequenceCli_RunFailsGracefullyWhenRepositoryCannotLoad,
                 MainForm_LoadsSavedSequencesIntoVisibleRows,
                 MainForm_RunButtonClickExecutesVisibleSequence,
                 MainForm_RemoveSequenceCancelKeepsSequence,
@@ -491,12 +496,51 @@ namespace usbrelay.Tests
             AssertFalse(ShouldWriteInteractiveSequenceSeparator("unknown", false), "Unknown sequence command should not get an extra leading line");
         }
 
+        private static void Program_SequenceRunRequiresNameThroughGrammar()
+        {
+            ProcessResult result = RunUsbRelay("sequence", "run");
+
+            AssertEqual(1, result.ExitCode, "sequence run without --name exit code");
+            AssertTrue(result.Error.Contains("--name"), "sequence run without --name should use grammar required-option error");
+        }
+
+        private static void Program_SequenceCommandRejectsUnexpectedArgumentThroughGrammar()
+        {
+            ProcessResult result = RunUsbRelay("sequence", "query", "unexpected");
+
+            AssertEqual(1, result.ExitCode, "sequence query unexpected argument exit code");
+            AssertTrue(result.Error.Contains("unexpected"), "sequence query unexpected argument should be reported by grammar");
+        }
+
         private static void Program_ReopenedConsoleUtf8EncodingDoesNotEmitPreamble()
         {
             Encoding encoding = CreateConsoleStreamEncoding(Encoding.UTF8);
 
             AssertEqual(Encoding.UTF8.CodePage, encoding.CodePage, "Console stream encoding should keep UTF-8 code page");
             AssertEqual(0, encoding.GetPreamble().Length, "Console stream UTF-8 encoding should not emit a BOM");
+        }
+
+        private static void Program_ReopenedConsoleUtf8EncodingPreservesFallbacks()
+        {
+            Encoding strictUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true, throwOnInvalidBytes: true);
+            Encoding encoding = CreateConsoleStreamEncoding(strictUtf8);
+
+            AssertEqual(Encoding.UTF8.CodePage, encoding.CodePage, "Strict console stream encoding should keep UTF-8 code page");
+            AssertEqual(0, encoding.GetPreamble().Length, "Strict console stream UTF-8 encoding should not emit a BOM");
+            AssertEqual(strictUtf8.EncoderFallback.GetType(), encoding.EncoderFallback.GetType(), "Console stream UTF-8 encoding should preserve encoder fallback");
+            AssertEqual(strictUtf8.DecoderFallback.GetType(), encoding.DecoderFallback.GetType(), "Console stream UTF-8 encoding should preserve decoder fallback");
+
+            bool decoderThrew = false;
+            try
+            {
+                encoding.GetString(new byte[] { 0xff });
+            }
+            catch (DecoderFallbackException)
+            {
+                decoderThrew = true;
+            }
+
+            AssertTrue(decoderThrew, "Console stream UTF-8 encoding should keep strict invalid-byte behavior");
         }
 
         private static void SequenceCli_QueryListsSavedSequences()
@@ -603,6 +647,39 @@ namespace usbrelay.Tests
             AssertEqual(1, exitCode, "Status missing exit code");
             AssertTrue(harness.Output.ToString().Contains("Missing relay: Missing resources"), "Status should report missing resources");
             AssertTrue(harness.Output.ToString().Contains("6QMBS:CH1"), "Status should show missing resource");
+        }
+
+        private static void SequenceCli_StatusReportsRelayEnumerationFailureDetails()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "sequences.json");
+            var repository = new SequenceRepository(path);
+            repository.Save(new[]
+            {
+                new SequenceDefinition
+                {
+                    Name = "Ready",
+                    RunButtonText = "Run",
+                    Description = "Ready sequence",
+                    Script = "sequence.PowerOn(\"6QMBS\", 1);"
+                }
+            });
+            var output = new StringWriter();
+            var error = new StringWriter();
+            var cli = new SequenceCli(
+                repository,
+                new ThrowingRelayBackend(new InvalidOperationException("native enumerate failed")),
+                new FakeExternalToolRunner(string.Empty),
+                output,
+                error);
+
+            int exitCode = cli.Status("Ready");
+            string errorText = error.ToString();
+
+            AssertEqual(1, exitCode, "Status relay enumeration failure exit code");
+            AssertTrue(errorText.Contains("Failed to enumerate relay devices."), "Status relay enumeration failure should include operation context");
+            AssertTrue(errorText.Contains("native enumerate failed"), "Status relay enumeration failure should include exception message");
+            AssertTrue(errorText.Contains("System.InvalidOperationException"), "Status relay enumeration failure should include exception type");
+            AssertEqual(string.Empty, output.ToString(), "Status relay enumeration failure should not print readiness output");
         }
 
         private static void SequenceCli_QueryWritesSummaryInSingleOutputCall()
@@ -795,6 +872,29 @@ namespace usbrelay.Tests
                 new SequenceDefinition { Name = "dup", RunButtonText = "Run", Description = "", Script = "sequence.PowerOn(\"6QMBS\", 2);" });
             AssertEqual(1, duplicate.Cli.Run("DUP"), "Duplicate run exit code");
             AssertTrue(duplicate.Error.ToString().Contains("Duplicate sequence name"), "Duplicate run should print duplicate error");
+        }
+
+        private static void SequenceCli_RunFailsGracefullyWhenRepositoryCannotLoad()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "sequences.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            File.WriteAllText(path, "{ invalid json", Encoding.UTF8);
+            var output = new StringWriter();
+            var error = new StringWriter();
+            var cli = new SequenceCli(
+                new SequenceRepository(path),
+                new FakeRelayBackend(new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0)),
+                new FakeExternalToolRunner(string.Empty),
+                output,
+                error);
+
+            int exitCode = cli.Run("Anything");
+            string errorText = error.ToString();
+
+            AssertEqual(1, exitCode, "Run repository load failure exit code");
+            AssertTrue(errorText.Contains("Failed to load sequences from repository."), "Run repository load failure should include operation context");
+            AssertTrue(errorText.Contains("System."), "Run repository load failure should include exception details");
+            AssertEqual(string.Empty, output.ToString(), "Run repository load failure should not print run output");
         }
 
         private static void MainForm_LoadsSavedSequencesIntoVisibleRows()
@@ -1335,27 +1435,215 @@ namespace usbrelay.Tests
 
             public int WriteCallCount { get; private set; }
 
+            public override void Write(bool value)
+            {
+                RecordWrite(value.ToString());
+            }
+
+            public override void Write(char value)
+            {
+                RecordWrite(value.ToString());
+            }
+
+            public override void Write(char[] buffer)
+            {
+                RecordWrite(buffer == null ? null : new string(buffer));
+            }
+
+            public override void Write(char[] buffer, int index, int count)
+            {
+                RecordWrite(buffer == null ? null : new string(buffer, index, count));
+            }
+
+            public override void Write(decimal value)
+            {
+                RecordWrite(value.ToString());
+            }
+
+            public override void Write(double value)
+            {
+                RecordWrite(value.ToString());
+            }
+
+            public override void Write(float value)
+            {
+                RecordWrite(value.ToString());
+            }
+
+            public override void Write(int value)
+            {
+                RecordWrite(value.ToString());
+            }
+
+            public override void Write(long value)
+            {
+                RecordWrite(value.ToString());
+            }
+
+            public override void Write(object value)
+            {
+                RecordWrite(value == null ? null : value.ToString());
+            }
+
             public override void Write(string value)
             {
-                WriteCallCount++;
-                builder.Append(value);
+                RecordWrite(value);
+            }
+
+            public override void Write(string format, object arg0)
+            {
+                RecordWrite(string.Format(format, arg0));
+            }
+
+            public override void Write(string format, object arg0, object arg1)
+            {
+                RecordWrite(string.Format(format, arg0, arg1));
+            }
+
+            public override void Write(string format, object arg0, object arg1, object arg2)
+            {
+                RecordWrite(string.Format(format, arg0, arg1, arg2));
+            }
+
+            public override void Write(string format, params object[] arg)
+            {
+                RecordWrite(string.Format(format, arg));
+            }
+
+            public override void Write(uint value)
+            {
+                RecordWrite(value.ToString());
+            }
+
+            public override void Write(ulong value)
+            {
+                RecordWrite(value.ToString());
             }
 
             public override void WriteLine()
             {
-                WriteCallCount++;
-                builder.AppendLine();
+                RecordWrite(Environment.NewLine);
+            }
+
+            public override void WriteLine(bool value)
+            {
+                RecordWrite(value + Environment.NewLine);
+            }
+
+            public override void WriteLine(char value)
+            {
+                RecordWrite(value + Environment.NewLine);
+            }
+
+            public override void WriteLine(char[] buffer)
+            {
+                RecordWrite((buffer == null ? null : new string(buffer)) + Environment.NewLine);
+            }
+
+            public override void WriteLine(char[] buffer, int index, int count)
+            {
+                RecordWrite((buffer == null ? null : new string(buffer, index, count)) + Environment.NewLine);
+            }
+
+            public override void WriteLine(decimal value)
+            {
+                RecordWrite(value + Environment.NewLine);
+            }
+
+            public override void WriteLine(double value)
+            {
+                RecordWrite(value + Environment.NewLine);
+            }
+
+            public override void WriteLine(float value)
+            {
+                RecordWrite(value + Environment.NewLine);
+            }
+
+            public override void WriteLine(int value)
+            {
+                RecordWrite(value + Environment.NewLine);
+            }
+
+            public override void WriteLine(long value)
+            {
+                RecordWrite(value + Environment.NewLine);
+            }
+
+            public override void WriteLine(object value)
+            {
+                RecordWrite((value == null ? null : value.ToString()) + Environment.NewLine);
             }
 
             public override void WriteLine(string value)
             {
-                WriteCallCount++;
-                builder.AppendLine(value);
+                RecordWrite(value + Environment.NewLine);
+            }
+
+            public override void WriteLine(string format, object arg0)
+            {
+                RecordWrite(string.Format(format, arg0) + Environment.NewLine);
+            }
+
+            public override void WriteLine(string format, object arg0, object arg1)
+            {
+                RecordWrite(string.Format(format, arg0, arg1) + Environment.NewLine);
+            }
+
+            public override void WriteLine(string format, object arg0, object arg1, object arg2)
+            {
+                RecordWrite(string.Format(format, arg0, arg1, arg2) + Environment.NewLine);
+            }
+
+            public override void WriteLine(string format, params object[] arg)
+            {
+                RecordWrite(string.Format(format, arg) + Environment.NewLine);
+            }
+
+            public override void WriteLine(uint value)
+            {
+                RecordWrite(value + Environment.NewLine);
+            }
+
+            public override void WriteLine(ulong value)
+            {
+                RecordWrite(value + Environment.NewLine);
             }
 
             public override string ToString()
             {
                 return builder.ToString();
+            }
+
+            private void RecordWrite(string value)
+            {
+                WriteCallCount++;
+                builder.Append(value);
+            }
+        }
+
+        private sealed class ThrowingRelayBackend : IRelayBackend
+        {
+            private readonly Exception exception;
+
+            public ThrowingRelayBackend(Exception exception)
+            {
+                this.exception = exception;
+            }
+
+            public IReadOnlyList<RelayDevice> EnumerateDevices()
+            {
+                throw exception;
+            }
+
+            public RelayDevice GetDevice(string serialNumber)
+            {
+                throw exception;
+            }
+
+            public void SetChannel(string serialNumber, int channel, bool on)
+            {
+                throw exception;
             }
         }
     }

@@ -76,7 +76,7 @@ namespace usbrelay
 
                 if (!Console.IsErrorRedirected)
                 {
-                    var error = new StreamWriter(Console.OpenStandardError(), CreateConsoleStreamEncoding(Console.OutputEncoding)) { AutoFlush = true };
+                    var error = new StreamWriter(Console.OpenStandardError(), CreateConsoleStreamEncoding(Console.Error.Encoding)) { AutoFlush = true };
                     Console.SetError(error);
                 }
             }
@@ -90,7 +90,12 @@ namespace usbrelay
         private static Encoding CreateConsoleStreamEncoding(Encoding encoding)
         {
             if (encoding.CodePage == Encoding.UTF8.CodePage)
-                return new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+            {
+                var utf8 = (Encoding)new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).Clone();
+                utf8.EncoderFallback = encoding.EncoderFallback;
+                utf8.DecoderFallback = encoding.DecoderFallback;
+                return utf8;
+            }
 
             return encoding;
         }

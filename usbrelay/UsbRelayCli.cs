@@ -119,28 +119,37 @@ namespace usbrelay
             if (args.Any(IsHelpArgument))
                 return InvokeSystemCommandLine(args);
 
-            if (args.Length < 2)
+            CliGrammar grammar = CliGrammar.Current;
+            var parseResult = grammar.RootCommand.Parse(NormalizeArguments(args));
+            if (parseResult.Errors.Count > 0)
             {
-                Console.Error.WriteLine("Usage: usbrelay sequence <query|status|run> [--name <name>]");
+                foreach (var error in parseResult.Errors)
+                    Console.Error.WriteLine(error.Message);
                 return 1;
             }
 
-            string name;
-            if (!TryReadNameOption(args, 2, out name))
-                return 1;
-
             var sequences = new SequenceCli();
-            string command = args[1];
-            if (string.Equals(command, "query", StringComparison.OrdinalIgnoreCase))
-                return sequences.Query(name, ShouldWriteInteractiveSequenceSeparator(command, Console.IsOutputRedirected));
+            var command = parseResult.CommandResult.Command;
+            string commandName = command.Name;
+            if (ReferenceEquals(command, grammar.SequenceQueryCommand))
+            {
+                string name = parseResult.GetValue(grammar.SequenceQueryNameOption);
+                return sequences.Query(name, ShouldWriteInteractiveSequenceSeparator(commandName, Console.IsOutputRedirected));
+            }
 
-            if (string.Equals(command, "status", StringComparison.OrdinalIgnoreCase))
-                return sequences.Status(name, ShouldWriteInteractiveSequenceSeparator(command, Console.IsOutputRedirected));
+            if (ReferenceEquals(command, grammar.SequenceStatusCommand))
+            {
+                string name = parseResult.GetValue(grammar.SequenceStatusNameOption);
+                return sequences.Status(name, ShouldWriteInteractiveSequenceSeparator(commandName, Console.IsOutputRedirected));
+            }
 
-            if (string.Equals(command, "run", StringComparison.OrdinalIgnoreCase))
-                return sequences.Run(name, ShouldWriteInteractiveSequenceSeparator(command, Console.IsOutputRedirected));
+            if (ReferenceEquals(command, grammar.SequenceRunCommand))
+            {
+                string name = parseResult.GetValue(grammar.SequenceRunNameOption);
+                return sequences.Run(name, ShouldWriteInteractiveSequenceSeparator(commandName, Console.IsOutputRedirected));
+            }
 
-            Console.Error.WriteLine("Unknown sequence command: " + command);
+            Console.Error.WriteLine("Usage: usbrelay sequence <query|status|run> [--name <name>]");
             return 1;
         }
 
@@ -152,30 +161,6 @@ namespace usbrelay
             return string.Equals(command, "query", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(command, "status", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(command, "run", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static bool TryReadNameOption(string[] args, int startIndex, out string name)
-        {
-            name = null;
-            for (int i = startIndex; i < args.Length; i++)
-            {
-                if (string.Equals(args[i], "--name", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (i + 1 >= args.Length || string.IsNullOrWhiteSpace(args[i + 1]))
-                    {
-                        Console.Error.WriteLine("--name requires a value.");
-                        return false;
-                    }
-
-                    name = args[++i];
-                    continue;
-                }
-
-                Console.Error.WriteLine("Unexpected sequence argument: " + args[i]);
-                return false;
-            }
-
-            return true;
         }
 
         private static int RunCompletion(string[] args)
