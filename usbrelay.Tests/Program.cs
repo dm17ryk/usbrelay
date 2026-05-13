@@ -52,15 +52,38 @@ namespace usbrelay.Tests
                 Program_CompletionSuggestsMatchingOptions,
                 Program_CompletionSuggestsOnChannels,
                 Program_CompletionSuggestsOffChannels,
+                Program_CompletionSuggestsSequenceCommand,
+                Program_CompletionSuggestsSequenceSubcommands,
                 Program_CompletionSuggestsLegacyAliases,
                 Program_CompletionHandlesQuotedExecutablePath,
                 Program_HelpDoesNotShowCompletionCommand,
+                Program_HelpArgumentPrintsSequenceExamples,
                 Program_NoArgumentTerminalRunPrintsUsageAndExits,
                 Program_HelpArgumentPrintsHelpAndExits,
                 Program_HelpArgumentPrintsExamples,
                 Program_VersionArgumentPrintsVersionAndExits,
                 Program_AssemblyVersionMatchesVersionProps,
                 Program_ProjectBuildsAsWindowsGuiExecutable,
+                Program_SequenceQueryUsesInteractiveOutputSeparator,
+                Program_SequenceRunRequiresNameThroughGrammar,
+                Program_SequenceCommandRejectsUnexpectedArgumentThroughGrammar,
+                Program_ReopenedConsoleUtf8EncodingDoesNotEmitPreamble,
+                Program_ReopenedConsoleUtf8EncodingPreservesFallbacks,
+                SequenceCli_QueryListsSavedSequences,
+                SequenceCli_QueryByNamePrintsDetails,
+                SequenceCli_QueryTableHasSeparatorLine,
+                SequenceCli_StatusReportsReadySequence,
+                SequenceCli_StatusFailsWhenRelayResourceIsMissing,
+                SequenceCli_StatusReportsRelayEnumerationFailureDetails,
+                SequenceCli_QueryWritesSummaryInSingleOutputCall,
+                SequenceCli_QueryCleanLinePrefixIsPartOfSingleOutputCall,
+                SequenceCli_QueryByNameWritesDetailInSingleOutputCall,
+                SequenceCli_StatusWritesReadinessInSingleOutputCall,
+                SequenceCli_StatusCleanLinePrefixIsPartOfSingleOutputCall,
+                SequenceCli_RunExecutesSavedSequence,
+                SequenceCli_RunCleanLinePrefixPrecedesStartedLine,
+                SequenceCli_RunFailsForInvalidMissingOrDuplicateName,
+                SequenceCli_RunFailsGracefullyWhenRepositoryCannotLoad,
                 MainForm_LoadsSavedSequencesIntoVisibleRows,
                 MainForm_RunButtonClickExecutesVisibleSequence,
                 MainForm_RemoveSequenceCancelKeepsSequence,
@@ -348,6 +371,22 @@ namespace usbrelay.Tests
             AssertSequence(new[] { "1", "2", "3", "4", "5", "6", "7", "8" }, completions, "--off channel completions");
         }
 
+        private static void Program_CompletionSuggestsSequenceCommand()
+        {
+            string[] completions = RunCompletion("usbrelay ");
+
+            AssertContains(completions, "sequence", "Top-level completions should include sequence command");
+        }
+
+        private static void Program_CompletionSuggestsSequenceSubcommands()
+        {
+            string[] completions = RunCompletion("usbrelay sequence ");
+
+            AssertContains(completions, "query", "Sequence completions should include query");
+            AssertContains(completions, "status", "Sequence completions should include status");
+            AssertContains(completions, "run", "Sequence completions should include run");
+        }
+
         private static void Program_CompletionSuggestsLegacyAliases()
         {
             string[] completions = RunCompletion("usbrelay -");
@@ -408,6 +447,16 @@ namespace usbrelay.Tests
             AssertTrue(result.Output.Contains("usbrelay --gui"), "Help should include GUI example");
         }
 
+        private static void Program_HelpArgumentPrintsSequenceExamples()
+        {
+            ProcessResult result = RunUsbRelay("--help");
+
+            AssertEqual(0, result.ExitCode, "--help exit code");
+            AssertTrue(result.Output.Contains("usbrelay sequence query"), "Help should include sequence query example");
+            AssertTrue(result.Output.Contains("usbrelay sequence status --name"), "Help should include sequence status example");
+            AssertTrue(result.Output.Contains("usbrelay sequence run --name"), "Help should include sequence run example");
+        }
+
         private static void Program_VersionArgumentPrintsVersionAndExits()
         {
             ProcessResult result = RunUsbRelay("-v");
@@ -434,6 +483,418 @@ namespace usbrelay.Tests
             string outputType = ReadXmlProperty(projectPath, "OutputType");
 
             AssertEqual("WinExe", outputType, "GUI executable should not create a console window on shell launch");
+        }
+
+        private static void Program_SequenceQueryUsesInteractiveOutputSeparator()
+        {
+            AssertTrue(ShouldWriteInteractiveSequenceSeparator("query", false), "Interactive sequence query should start on a clean line");
+            AssertTrue(ShouldWriteInteractiveSequenceSeparator("status", false), "Interactive sequence status should start on a clean line");
+            AssertTrue(ShouldWriteInteractiveSequenceSeparator("run", false), "Interactive sequence run should start on a clean line");
+            AssertFalse(ShouldWriteInteractiveSequenceSeparator("query", true), "Redirected sequence query should not get an extra leading line");
+            AssertFalse(ShouldWriteInteractiveSequenceSeparator("status", true), "Redirected sequence status should not get an extra leading line");
+            AssertFalse(ShouldWriteInteractiveSequenceSeparator("run", true), "Redirected sequence run should not get an extra leading line");
+            AssertFalse(ShouldWriteInteractiveSequenceSeparator("unknown", false), "Unknown sequence command should not get an extra leading line");
+        }
+
+        private static void Program_SequenceRunRequiresNameThroughGrammar()
+        {
+            ProcessResult result = RunUsbRelay("sequence", "run");
+
+            AssertEqual(1, result.ExitCode, "sequence run without --name exit code");
+            AssertTrue(result.Error.Contains("--name"), "sequence run without --name should use grammar required-option error");
+        }
+
+        private static void Program_SequenceCommandRejectsUnexpectedArgumentThroughGrammar()
+        {
+            ProcessResult result = RunUsbRelay("sequence", "query", "unexpected");
+
+            AssertEqual(1, result.ExitCode, "sequence query unexpected argument exit code");
+            AssertTrue(result.Error.Contains("unexpected"), "sequence query unexpected argument should be reported by grammar");
+        }
+
+        private static void Program_ReopenedConsoleUtf8EncodingDoesNotEmitPreamble()
+        {
+            Encoding encoding = CreateConsoleStreamEncoding(Encoding.UTF8);
+
+            AssertEqual(Encoding.UTF8.CodePage, encoding.CodePage, "Console stream encoding should keep UTF-8 code page");
+            AssertEqual(0, encoding.GetPreamble().Length, "Console stream UTF-8 encoding should not emit a BOM");
+        }
+
+        private static void Program_ReopenedConsoleUtf8EncodingPreservesFallbacks()
+        {
+            Encoding strictUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true, throwOnInvalidBytes: true);
+            Encoding encoding = CreateConsoleStreamEncoding(strictUtf8);
+
+            AssertEqual(Encoding.UTF8.CodePage, encoding.CodePage, "Strict console stream encoding should keep UTF-8 code page");
+            AssertEqual(0, encoding.GetPreamble().Length, "Strict console stream UTF-8 encoding should not emit a BOM");
+            AssertEqual(strictUtf8.EncoderFallback.GetType(), encoding.EncoderFallback.GetType(), "Console stream UTF-8 encoding should preserve encoder fallback");
+            AssertEqual(strictUtf8.DecoderFallback.GetType(), encoding.DecoderFallback.GetType(), "Console stream UTF-8 encoding should preserve decoder fallback");
+
+            bool decoderThrew = false;
+            try
+            {
+                encoding.GetString(new byte[] { 0xff });
+            }
+            catch (DecoderFallbackException)
+            {
+                decoderThrew = true;
+            }
+
+            AssertTrue(decoderThrew, "Console stream UTF-8 encoding should keep strict invalid-byte behavior");
+        }
+
+        private static void SequenceCli_QueryListsSavedSequences()
+        {
+            var harness = CreateSequenceCliHarness(
+                new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0),
+                new SequenceDefinition
+                {
+                    Name = "Power cycle DUT",
+                    RunButtonText = "Cycle",
+                    Description = "Cycle DUT power",
+                    Script = "sequence.PowerOff(\"6QMBS\", 1);"
+                });
+
+            int exitCode = harness.Cli.Query(null);
+
+            AssertEqual(0, exitCode, "Query exit code");
+            AssertTrue(harness.Output.ToString().Contains("Power cycle DUT"), "Query should list sequence name");
+            AssertTrue(harness.Output.ToString().Contains("Cycle"), "Query should list run button text");
+            AssertTrue(harness.Output.ToString().Contains("Valid"), "Query should list validity");
+            AssertTrue(harness.Output.ToString().Contains("6QMBS:CH1"), "Query should list resources");
+            AssertEqual(string.Empty, harness.Error.ToString(), "Query stderr");
+        }
+
+        private static void SequenceCli_QueryByNamePrintsDetails()
+        {
+            var harness = CreateSequenceCliHarness(
+                new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0),
+                new SequenceDefinition
+                {
+                    Name = "Inspect",
+                    RunButtonText = "Inspect",
+                    Description = "Detailed sequence",
+                    Script = "sequence.ReadChannel(\"6QMBS\", 2);"
+                });
+
+            int exitCode = harness.Cli.Query("inspect");
+
+            AssertEqual(0, exitCode, "Query detail exit code");
+            AssertTrue(harness.Output.ToString().Contains("Name: Inspect"), "Query detail should include name");
+            AssertTrue(harness.Output.ToString().Contains("Description: Detailed sequence"), "Query detail should include description");
+            AssertTrue(harness.Output.ToString().Contains("sequence.ReadChannel(\"6QMBS\", 2);"), "Query detail should include script");
+            AssertTrue(harness.Output.ToString().Contains("6QMBS:CH2"), "Query detail should include resources");
+        }
+
+        private static void SequenceCli_QueryTableHasSeparatorLine()
+        {
+            var harness = CreateSequenceCliHarness(
+                new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0),
+                new SequenceDefinition
+                {
+                    Name = "CP Reset",
+                    RunButtonText = "CP Reset",
+                    Description = "Reset CP",
+                    Script = "sequence.PowerOff(\"6QMBS\", 1);"
+                });
+
+            int exitCode = harness.Cli.Query(null);
+            string output = harness.Output.ToString();
+            string[] lines = output.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+
+            AssertEqual(0, exitCode, "Query table separator exit code");
+            AssertTrue(lines.Length >= 3, "Query table should contain header, separator, and row");
+            AssertTrue(lines[0].Contains("Name") && lines[0].Contains("Run button") && lines[0].Contains("Validity") && lines[0].Contains("Resources"), "Query table header should contain all columns");
+            AssertTrue(lines[1].StartsWith("----"), "Query table should contain a separator after the header");
+            AssertTrue(lines[1].All(ch => ch == '-' || ch == ' '), "Query table separator should use dashes and spaces");
+            AssertTrue(lines[2].Contains("CP Reset"), "Query table row should follow separator");
+            AssertFalse(output.Contains("\t"), "Query table should use fixed spacing instead of tabs");
+        }
+
+        private static void SequenceCli_StatusReportsReadySequence()
+        {
+            var harness = CreateSequenceCliHarness(
+                new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0),
+                new SequenceDefinition
+                {
+                    Name = "Ready",
+                    RunButtonText = "Run",
+                    Description = "Ready sequence",
+                    Script = "sequence.PowerOn(\"6QMBS\", 1);"
+                });
+
+            int exitCode = harness.Cli.Status("Ready");
+
+            AssertEqual(0, exitCode, "Status ready exit code");
+            AssertTrue(harness.Output.ToString().Contains("Ready: Ready"), "Status should report ready");
+            AssertEqual(string.Empty, harness.Error.ToString(), "Ready status stderr");
+        }
+
+        private static void SequenceCli_StatusFailsWhenRelayResourceIsMissing()
+        {
+            var harness = CreateSequenceCliHarness(
+                new RelayDevice("OTHER", RelayDeviceType.EightChannel, 8, 0),
+                new SequenceDefinition
+                {
+                    Name = "Missing relay",
+                    RunButtonText = "Run",
+                    Description = "Missing sequence",
+                    Script = "sequence.PowerOn(\"6QMBS\", 1);"
+                });
+
+            int exitCode = harness.Cli.Status("Missing relay");
+
+            AssertEqual(1, exitCode, "Status missing exit code");
+            AssertTrue(harness.Output.ToString().Contains("Missing relay: Missing resources"), "Status should report missing resources");
+            AssertTrue(harness.Output.ToString().Contains("6QMBS:CH1"), "Status should show missing resource");
+        }
+
+        private static void SequenceCli_StatusReportsRelayEnumerationFailureDetails()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "sequences.json");
+            var repository = new SequenceRepository(path);
+            repository.Save(new[]
+            {
+                new SequenceDefinition
+                {
+                    Name = "Ready",
+                    RunButtonText = "Run",
+                    Description = "Ready sequence",
+                    Script = "sequence.PowerOn(\"6QMBS\", 1);"
+                }
+            });
+            var output = new StringWriter();
+            var error = new StringWriter();
+            var cli = new SequenceCli(
+                repository,
+                new ThrowingRelayBackend(new InvalidOperationException("native enumerate failed")),
+                new FakeExternalToolRunner(string.Empty),
+                output,
+                error);
+
+            int exitCode = cli.Status("Ready");
+            string errorText = error.ToString();
+
+            AssertEqual(1, exitCode, "Status relay enumeration failure exit code");
+            AssertTrue(errorText.Contains("Failed to enumerate relay devices."), "Status relay enumeration failure should include operation context");
+            AssertTrue(errorText.Contains("native enumerate failed"), "Status relay enumeration failure should include exception message");
+            AssertTrue(errorText.Contains("System.InvalidOperationException"), "Status relay enumeration failure should include exception type");
+            AssertEqual(string.Empty, output.ToString(), "Status relay enumeration failure should not print readiness output");
+        }
+
+        private static void SequenceCli_QueryWritesSummaryInSingleOutputCall()
+        {
+            var output = new RecordingTextWriter();
+            var harness = CreateSequenceCliHarness(
+                new FakeRelayBackend(new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0)),
+                output,
+                new SequenceDefinition
+                {
+                    Name = "CP Reset",
+                    RunButtonText = "CP Reset",
+                    Description = "Reset CP",
+                    Script = "sequence.PowerOff(\"6QMBS\", 1);"
+                },
+                new SequenceDefinition
+                {
+                    Name = "CP On",
+                    RunButtonText = "CP On",
+                    Description = "Turn CP on",
+                    Script = "sequence.PowerOn(\"6QMBS\", 2);"
+                });
+
+            int exitCode = harness.Cli.Query(null);
+
+            AssertEqual(0, exitCode, "Query buffered exit code");
+            AssertEqual(1, output.WriteCallCount, "Query should write summary output once");
+            AssertTrue(output.ToString().Contains("Name"), "Query should keep summary header");
+            AssertTrue(output.ToString().Contains("----"), "Query should keep summary separator");
+            AssertTrue(output.ToString().Contains("CP Reset"), "Query should keep sequence rows");
+        }
+
+        private static void SequenceCli_QueryCleanLinePrefixIsPartOfSingleOutputCall()
+        {
+            var output = new RecordingTextWriter();
+            var harness = CreateSequenceCliHarness(
+                new FakeRelayBackend(new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0)),
+                output,
+                new SequenceDefinition
+                {
+                    Name = "CP Reset",
+                    RunButtonText = "CP Reset",
+                    Description = "Reset CP",
+                    Script = "sequence.PowerOff(\"6QMBS\", 1);"
+                });
+
+            int exitCode = harness.Cli.Query(null, true);
+
+            AssertEqual(0, exitCode, "Query clean-line exit code");
+            AssertEqual(1, output.WriteCallCount, "Query clean-line output should still be one write");
+            AssertTrue(output.ToString().StartsWith(Environment.NewLine + "Name"), "Query clean-line output should prefix the final table write");
+        }
+
+        private static void SequenceCli_QueryByNameWritesDetailInSingleOutputCall()
+        {
+            var output = new RecordingTextWriter();
+            var harness = CreateSequenceCliHarness(
+                new FakeRelayBackend(new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0)),
+                output,
+                new SequenceDefinition
+                {
+                    Name = "Inspect",
+                    RunButtonText = "Inspect",
+                    Description = "Detailed sequence",
+                    Script = "sequence.ReadChannel(\"6QMBS\", 2);"
+                });
+
+            int exitCode = harness.Cli.Query("Inspect");
+
+            AssertEqual(0, exitCode, "Query detail buffered exit code");
+            AssertEqual(1, output.WriteCallCount, "Query detail should write output once");
+            AssertTrue(output.ToString().Contains("Name: Inspect"), "Query detail should keep name");
+            AssertTrue(output.ToString().Contains("Script:"), "Query detail should keep script section");
+        }
+
+        private static void SequenceCli_StatusWritesReadinessInSingleOutputCall()
+        {
+            var output = new RecordingTextWriter();
+            var harness = CreateSequenceCliHarness(
+                new FakeRelayBackend(new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0)),
+                output,
+                new SequenceDefinition
+                {
+                    Name = "Ready one",
+                    RunButtonText = "Run",
+                    Description = "Ready one",
+                    Script = "sequence.PowerOn(\"6QMBS\", 1);"
+                },
+                new SequenceDefinition
+                {
+                    Name = "Ready two",
+                    RunButtonText = "Run",
+                    Description = "Ready two",
+                    Script = "sequence.PowerOff(\"6QMBS\", 2);"
+                });
+
+            int exitCode = harness.Cli.Status(null);
+
+            AssertEqual(0, exitCode, "Status buffered exit code");
+            AssertEqual(1, output.WriteCallCount, "Status should write readiness output once");
+            AssertTrue(output.ToString().Contains("Ready one: Ready"), "Status should keep first sequence line");
+            AssertTrue(output.ToString().Contains("Ready two: Ready"), "Status should keep second sequence line");
+        }
+
+        private static void SequenceCli_StatusCleanLinePrefixIsPartOfSingleOutputCall()
+        {
+            var output = new RecordingTextWriter();
+            var harness = CreateSequenceCliHarness(
+                new FakeRelayBackend(new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0)),
+                output,
+                new SequenceDefinition
+                {
+                    Name = "Ready one",
+                    RunButtonText = "Run",
+                    Description = "Ready one",
+                    Script = "sequence.PowerOn(\"6QMBS\", 1);"
+                });
+
+            int exitCode = harness.Cli.Status(null, true);
+
+            AssertEqual(0, exitCode, "Status clean-line exit code");
+            AssertEqual(1, output.WriteCallCount, "Status clean-line output should still be one write");
+            AssertTrue(output.ToString().StartsWith(Environment.NewLine + "Ready one: Ready"), "Status clean-line output should prefix the readiness write");
+        }
+
+        private static void SequenceCli_RunExecutesSavedSequence()
+        {
+            var relay = new FakeRelayBackend(new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0));
+            var harness = CreateSequenceCliHarness(
+                relay,
+                new SequenceDefinition
+                {
+                    Name = "Turn on",
+                    RunButtonText = "Run",
+                    Description = "Turns channel on",
+                    Script = "sequence.PowerOn(\"6QMBS\", 1);"
+                });
+
+            int exitCode = harness.Cli.Run("Turn on");
+
+            AssertEqual(0, exitCode, "Run exit code");
+            AssertTrue(relay.GetChannelState("6QMBS", 1), "Run should turn CH1 on");
+            AssertTrue(harness.Output.ToString().Contains("Turn on finished"), "Run should print finish line");
+            AssertEqual(string.Empty, harness.Error.ToString(), "Run stderr");
+        }
+
+        private static void SequenceCli_RunCleanLinePrefixPrecedesStartedLine()
+        {
+            var output = new RecordingTextWriter();
+            var harness = CreateSequenceCliHarness(
+                new FakeRelayBackend(new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0)),
+                output,
+                new SequenceDefinition
+                {
+                    Name = "Turn on",
+                    RunButtonText = "Run",
+                    Description = "Turns channel on",
+                    Script = "sequence.PowerOn(\"6QMBS\", 1);"
+                });
+
+            int exitCode = harness.Cli.Run("Turn on", true);
+
+            AssertEqual(0, exitCode, "Run clean-line exit code");
+            AssertTrue(output.ToString().StartsWith(Environment.NewLine + "Turn on started"), "Run clean-line output should prefix the started line");
+            AssertTrue(output.WriteCallCount > 1, "Run should keep streaming log output after the started line");
+        }
+
+        private static void SequenceCli_RunFailsForInvalidMissingOrDuplicateName()
+        {
+            var invalid = CreateSequenceCliHarness(
+                new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0),
+                new SequenceDefinition
+                {
+                    Name = "Invalid",
+                    RunButtonText = "Run",
+                    Description = "Invalid",
+                    Script = "sequence.Unknown();"
+                });
+
+            AssertEqual(1, invalid.Cli.Run("Invalid"), "Invalid run exit code");
+            AssertTrue(invalid.Error.ToString().Contains("Unsupported sequence command"), "Invalid run should print diagnostics");
+
+            var missing = CreateSequenceCliHarness(new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0));
+            AssertEqual(1, missing.Cli.Run("Missing"), "Missing run exit code");
+            AssertTrue(missing.Error.ToString().Contains("Sequence not found"), "Missing run should print not found");
+
+            var duplicate = CreateSequenceCliHarness(
+                new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0),
+                new SequenceDefinition { Name = "Dup", RunButtonText = "Run", Description = "", Script = "sequence.PowerOn(\"6QMBS\", 1);" },
+                new SequenceDefinition { Name = "dup", RunButtonText = "Run", Description = "", Script = "sequence.PowerOn(\"6QMBS\", 2);" });
+            AssertEqual(1, duplicate.Cli.Run("DUP"), "Duplicate run exit code");
+            AssertTrue(duplicate.Error.ToString().Contains("Duplicate sequence name"), "Duplicate run should print duplicate error");
+        }
+
+        private static void SequenceCli_RunFailsGracefullyWhenRepositoryCannotLoad()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "sequences.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            File.WriteAllText(path, "{ invalid json", Encoding.UTF8);
+            var output = new StringWriter();
+            var error = new StringWriter();
+            var cli = new SequenceCli(
+                new SequenceRepository(path),
+                new FakeRelayBackend(new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0)),
+                new FakeExternalToolRunner(string.Empty),
+                output,
+                error);
+
+            int exitCode = cli.Run("Anything");
+            string errorText = error.ToString();
+
+            AssertEqual(1, exitCode, "Run repository load failure exit code");
+            AssertTrue(errorText.Contains("Failed to load sequences from repository."), "Run repository load failure should include operation context");
+            AssertTrue(errorText.Contains("System."), "Run repository load failure should include exception details");
+            AssertEqual(string.Empty, output.ToString(), "Run repository load failure should not print run output");
         }
 
         private static void MainForm_LoadsSavedSequencesIntoVisibleRows()
@@ -687,6 +1148,28 @@ namespace usbrelay.Tests
             InvokePrivate(form, "SelectGridSequence");
         }
 
+        private static SequenceCliHarness CreateSequenceCliHarness(FakeRelayBackend relay, params SequenceDefinition[] sequences)
+        {
+            return CreateSequenceCliHarness(relay, new StringWriter(), sequences);
+        }
+
+        private static SequenceCliHarness CreateSequenceCliHarness(FakeRelayBackend relay, TextWriter output, params SequenceDefinition[] sequences)
+        {
+            string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "sequences.json");
+            var repository = new SequenceRepository(path);
+            repository.Save(sequences);
+            var error = new StringWriter();
+            return new SequenceCliHarness(
+                new SequenceCli(repository, relay, new FakeExternalToolRunner(string.Empty), output, error),
+                output,
+                error);
+        }
+
+        private static SequenceCliHarness CreateSequenceCliHarness(RelayDevice device, params SequenceDefinition[] sequences)
+        {
+            return CreateSequenceCliHarness(new FakeRelayBackend(device), sequences);
+        }
+
         private static object GetPrivateField(object instance, string fieldName)
         {
             return instance.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(instance);
@@ -714,6 +1197,22 @@ namespace usbrelay.Tests
             var method = consoleWindowType.GetMethod("HasInheritedConsoleProcessCount", BindingFlags.Static | BindingFlags.NonPublic);
             AssertTrue(method != null, "ConsoleWindow.HasInheritedConsoleProcessCount should exist");
             return (bool)method.Invoke(null, new object[] { processCount });
+        }
+
+        private static bool ShouldWriteInteractiveSequenceSeparator(string command, bool outputRedirected)
+        {
+            var cliType = typeof(MainForm).Assembly.GetType("usbrelay.UsbRelayCli", true);
+            var method = cliType.GetMethod("ShouldWriteInteractiveSequenceSeparator", BindingFlags.Static | BindingFlags.NonPublic);
+            AssertTrue(method != null, "UsbRelayCli.ShouldWriteInteractiveSequenceSeparator should exist");
+            return (bool)method.Invoke(null, new object[] { command, outputRedirected });
+        }
+
+        private static Encoding CreateConsoleStreamEncoding(Encoding encoding)
+        {
+            var consoleWindowType = typeof(MainForm).Assembly.GetType("usbrelay.ConsoleWindow", true);
+            var method = consoleWindowType.GetMethod("CreateConsoleStreamEncoding", BindingFlags.Static | BindingFlags.NonPublic);
+            AssertTrue(method != null, "ConsoleWindow.CreateConsoleStreamEncoding should exist");
+            return (Encoding)method.Invoke(null, new object[] { encoding });
         }
 
         private static T GetProperty<T>(object instance, string propertyName)
@@ -765,6 +1264,11 @@ namespace usbrelay.Tests
         private static ProcessResult RunUsbRelay(params string[] args)
         {
             string executablePath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "usbrelay.exe");
+            return RunProcess(executablePath, args);
+        }
+
+        private static ProcessResult RunProcess(string executablePath, params string[] args)
+        {
             var startInfo = new ProcessStartInfo(executablePath)
             {
                 UseShellExecute = false,
@@ -904,6 +1408,243 @@ namespace usbrelay.Tests
             public int ExitCode { get; }
             public string Output { get; }
             public string Error { get; }
+        }
+
+        private sealed class SequenceCliHarness
+        {
+            public SequenceCliHarness(SequenceCli cli, TextWriter output, TextWriter error)
+            {
+                Cli = cli;
+                Output = output;
+                Error = error;
+            }
+
+            public SequenceCli Cli { get; }
+            public TextWriter Output { get; }
+            public TextWriter Error { get; }
+        }
+
+        private sealed class RecordingTextWriter : TextWriter
+        {
+            private readonly StringBuilder builder = new StringBuilder();
+
+            public override Encoding Encoding
+            {
+                get { return Encoding.UTF8; }
+            }
+
+            public int WriteCallCount { get; private set; }
+
+            public override void Write(bool value)
+            {
+                RecordWrite(value.ToString());
+            }
+
+            public override void Write(char value)
+            {
+                RecordWrite(value.ToString());
+            }
+
+            public override void Write(char[] buffer)
+            {
+                RecordWrite(buffer == null ? null : new string(buffer));
+            }
+
+            public override void Write(char[] buffer, int index, int count)
+            {
+                RecordWrite(buffer == null ? null : new string(buffer, index, count));
+            }
+
+            public override void Write(decimal value)
+            {
+                RecordWrite(value.ToString());
+            }
+
+            public override void Write(double value)
+            {
+                RecordWrite(value.ToString());
+            }
+
+            public override void Write(float value)
+            {
+                RecordWrite(value.ToString());
+            }
+
+            public override void Write(int value)
+            {
+                RecordWrite(value.ToString());
+            }
+
+            public override void Write(long value)
+            {
+                RecordWrite(value.ToString());
+            }
+
+            public override void Write(object value)
+            {
+                RecordWrite(value == null ? null : value.ToString());
+            }
+
+            public override void Write(string value)
+            {
+                RecordWrite(value);
+            }
+
+            public override void Write(string format, object arg0)
+            {
+                RecordWrite(string.Format(format, arg0));
+            }
+
+            public override void Write(string format, object arg0, object arg1)
+            {
+                RecordWrite(string.Format(format, arg0, arg1));
+            }
+
+            public override void Write(string format, object arg0, object arg1, object arg2)
+            {
+                RecordWrite(string.Format(format, arg0, arg1, arg2));
+            }
+
+            public override void Write(string format, params object[] arg)
+            {
+                RecordWrite(string.Format(format, arg));
+            }
+
+            public override void Write(uint value)
+            {
+                RecordWrite(value.ToString());
+            }
+
+            public override void Write(ulong value)
+            {
+                RecordWrite(value.ToString());
+            }
+
+            public override void WriteLine()
+            {
+                RecordWrite(Environment.NewLine);
+            }
+
+            public override void WriteLine(bool value)
+            {
+                RecordWrite(value + Environment.NewLine);
+            }
+
+            public override void WriteLine(char value)
+            {
+                RecordWrite(value + Environment.NewLine);
+            }
+
+            public override void WriteLine(char[] buffer)
+            {
+                RecordWrite((buffer == null ? null : new string(buffer)) + Environment.NewLine);
+            }
+
+            public override void WriteLine(char[] buffer, int index, int count)
+            {
+                RecordWrite((buffer == null ? null : new string(buffer, index, count)) + Environment.NewLine);
+            }
+
+            public override void WriteLine(decimal value)
+            {
+                RecordWrite(value + Environment.NewLine);
+            }
+
+            public override void WriteLine(double value)
+            {
+                RecordWrite(value + Environment.NewLine);
+            }
+
+            public override void WriteLine(float value)
+            {
+                RecordWrite(value + Environment.NewLine);
+            }
+
+            public override void WriteLine(int value)
+            {
+                RecordWrite(value + Environment.NewLine);
+            }
+
+            public override void WriteLine(long value)
+            {
+                RecordWrite(value + Environment.NewLine);
+            }
+
+            public override void WriteLine(object value)
+            {
+                RecordWrite((value == null ? null : value.ToString()) + Environment.NewLine);
+            }
+
+            public override void WriteLine(string value)
+            {
+                RecordWrite(value + Environment.NewLine);
+            }
+
+            public override void WriteLine(string format, object arg0)
+            {
+                RecordWrite(string.Format(format, arg0) + Environment.NewLine);
+            }
+
+            public override void WriteLine(string format, object arg0, object arg1)
+            {
+                RecordWrite(string.Format(format, arg0, arg1) + Environment.NewLine);
+            }
+
+            public override void WriteLine(string format, object arg0, object arg1, object arg2)
+            {
+                RecordWrite(string.Format(format, arg0, arg1, arg2) + Environment.NewLine);
+            }
+
+            public override void WriteLine(string format, params object[] arg)
+            {
+                RecordWrite(string.Format(format, arg) + Environment.NewLine);
+            }
+
+            public override void WriteLine(uint value)
+            {
+                RecordWrite(value + Environment.NewLine);
+            }
+
+            public override void WriteLine(ulong value)
+            {
+                RecordWrite(value + Environment.NewLine);
+            }
+
+            public override string ToString()
+            {
+                return builder.ToString();
+            }
+
+            private void RecordWrite(string value)
+            {
+                WriteCallCount++;
+                builder.Append(value);
+            }
+        }
+
+        private sealed class ThrowingRelayBackend : IRelayBackend
+        {
+            private readonly Exception exception;
+
+            public ThrowingRelayBackend(Exception exception)
+            {
+                this.exception = exception;
+            }
+
+            public IReadOnlyList<RelayDevice> EnumerateDevices()
+            {
+                throw exception;
+            }
+
+            public RelayDevice GetDevice(string serialNumber)
+            {
+                throw exception;
+            }
+
+            public void SetChannel(string serialNumber, int channel, bool on)
+            {
+                throw exception;
+            }
         }
     }
 }

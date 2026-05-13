@@ -11,6 +11,9 @@ namespace usbrelay
             if (IsCompletionRequest(args))
                 return RunCompletion(args);
 
+            if (IsSequenceRequest(args))
+                return RunSequenceCommand(args);
+
             if (args.Length < 1)
             {
                 PrintHelpWithExamples();
@@ -51,7 +54,7 @@ namespace usbrelay
             return 0;
         }
 
-        public static ParsedCliCommand ParseCommand(string[] args)
+        internal static ParsedCliCommand ParseCommand(string[] args)
         {
             string[] normalizedArgs = NormalizeArguments(args);
             CliGrammar grammar = CliGrammar.Current;
@@ -106,6 +109,60 @@ namespace usbrelay
             return args.Length > 0 && string.Equals(args[0], "complete", StringComparison.OrdinalIgnoreCase);
         }
 
+        private static bool IsSequenceRequest(string[] args)
+        {
+            return args.Length > 0 && string.Equals(args[0], "sequence", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static int RunSequenceCommand(string[] args)
+        {
+            if (args.Any(IsHelpArgument))
+                return InvokeSystemCommandLine(args);
+
+            CliGrammar grammar = CliGrammar.Current;
+            var parseResult = grammar.RootCommand.Parse(NormalizeArguments(args));
+            if (parseResult.Errors.Count > 0)
+            {
+                foreach (var error in parseResult.Errors)
+                    Console.Error.WriteLine(error.Message);
+                return 1;
+            }
+
+            var sequences = new SequenceCli();
+            var command = parseResult.CommandResult.Command;
+            string commandName = command.Name;
+            if (ReferenceEquals(command, grammar.SequenceQueryCommand))
+            {
+                string name = parseResult.GetValue(grammar.SequenceQueryNameOption);
+                return sequences.Query(name, ShouldWriteInteractiveSequenceSeparator(commandName, Console.IsOutputRedirected));
+            }
+
+            if (ReferenceEquals(command, grammar.SequenceStatusCommand))
+            {
+                string name = parseResult.GetValue(grammar.SequenceStatusNameOption);
+                return sequences.Status(name, ShouldWriteInteractiveSequenceSeparator(commandName, Console.IsOutputRedirected));
+            }
+
+            if (ReferenceEquals(command, grammar.SequenceRunCommand))
+            {
+                string name = parseResult.GetValue(grammar.SequenceRunNameOption);
+                return sequences.Run(name, ShouldWriteInteractiveSequenceSeparator(commandName, Console.IsOutputRedirected));
+            }
+
+            Console.Error.WriteLine("Usage: usbrelay sequence <query|status|run> [--name <name>]");
+            return 1;
+        }
+
+        private static bool ShouldWriteInteractiveSequenceSeparator(string command, bool outputRedirected)
+        {
+            if (outputRedirected)
+                return false;
+
+            return string.Equals(command, "query", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(command, "status", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(command, "run", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static int RunCompletion(string[] args)
         {
             string line;
@@ -134,6 +191,9 @@ namespace usbrelay
             Console.WriteLine("  usbrelay --serial BITFT --off 2");
             Console.WriteLine("  usbrelay --serial BITFT --on 1 3 5 --off 2 4 6");
             Console.WriteLine("  usbrelay --gui");
+            Console.WriteLine("  usbrelay sequence query");
+            Console.WriteLine("  usbrelay sequence status --name \"Power cycle DUT\"");
+            Console.WriteLine("  usbrelay sequence run --name \"Power cycle DUT\"");
         }
 
         private static int InvokeSystemCommandLine(string[] args)

@@ -54,6 +54,7 @@ Description:
 
 Usage:
   usbrelay [options]
+  usbrelay sequence <query|status|run> [--name <name>]
 
 Options:
   --list             List all available serial numbers of connected USB-Relay devices.
@@ -65,6 +66,9 @@ Options:
   -?, -h, --help     Show help and usage information
   --version          Show version information
 
+Commands:
+  sequence           Query, validate, and run saved GUI sequences.
+
 Examples:
   usbrelay --list
   usbrelay --status
@@ -73,11 +77,33 @@ Examples:
   usbrelay --serial BITFT --off 2
   usbrelay --serial BITFT --on 1 3 5 --off 2 4 6
   usbrelay --gui
+  usbrelay sequence query
+  usbrelay sequence status --name "Power cycle DUT"
+  usbrelay sequence run --name "Power cycle DUT"
 ```
 
 The legacy single-dash options are still accepted for compatibility: `-list`,
 `-status`, `-serial`, `-on`, `-off`, and `-gui`. `-v` is accepted as a short
 alias for `--version`.
+
+# sequence CLI
+
+Saved GUI sequences can be inspected and run from the command line with the
+`sequence` command group. The CLI only uses sequences saved by the GUI in the
+local sequence repository; it does not accept inline script text.
+
+```
+usbrelay sequence query
+usbrelay sequence query --name "Power cycle DUT"
+usbrelay sequence status
+usbrelay sequence status --name "Power cycle DUT"
+usbrelay sequence run --name "Power cycle DUT"
+```
+
+`query` prints saved sequence summaries, or one detailed sequence when `--name`
+is provided. `status` validates saved scripts and checks their relay resources
+against the currently connected USB-Relay devices. `run` requires `--name` and
+executes the saved sequence with real delays and any saved external-tool steps.
 
 # shell completion
 
@@ -97,7 +123,8 @@ PS D:\bin> Add-Content $PROFILE '. D:\path\to\usbrelay\scripts\usbrelay-completi
 
 The PowerShell completer registers both `usbrelay` and `usbrelay.exe`. It
 completes options, help/version aliases, GUI mode, legacy single-dash aliases,
-and channel values `1` through `8` for `--on`, `-on`, `--off`, and `-off`.
+the `sequence` command group, sequence subcommands, `--name`, and channel values
+`1` through `8` for `--on`, `-on`, `--off`, and `-off`.
 The script also creates a session-local `usbrelay` alias to the `-CommandPath`
 target. Use that alias for completion instead of registering relative paths such
 as `.\usbrelay\bin\Debug\usbrelay.exe`; some PowerShell completion/menu modules

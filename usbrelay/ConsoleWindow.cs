@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace usbrelay
 {
@@ -69,13 +70,13 @@ namespace usbrelay
             {
                 if (!Console.IsOutputRedirected)
                 {
-                    var output = new StreamWriter(Console.OpenStandardOutput(), Console.OutputEncoding) { AutoFlush = true };
+                    var output = new StreamWriter(Console.OpenStandardOutput(), CreateConsoleStreamEncoding(Console.OutputEncoding)) { AutoFlush = true };
                     Console.SetOut(output);
                 }
 
                 if (!Console.IsErrorRedirected)
                 {
-                    var error = new StreamWriter(Console.OpenStandardError(), Console.OutputEncoding) { AutoFlush = true };
+                    var error = new StreamWriter(Console.OpenStandardError(), CreateConsoleStreamEncoding(Console.Error.Encoding)) { AutoFlush = true };
                     Console.SetError(error);
                 }
             }
@@ -84,6 +85,19 @@ namespace usbrelay
                 // Console stream repair is best-effort; redirected CLI tests and GUI startup
                 // should continue even when a host denies stream reopening.
             }
+        }
+
+        private static Encoding CreateConsoleStreamEncoding(Encoding encoding)
+        {
+            if (encoding.CodePage == Encoding.UTF8.CodePage)
+            {
+                var utf8 = (Encoding)new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).Clone();
+                utf8.EncoderFallback = encoding.EncoderFallback;
+                utf8.DecoderFallback = encoding.DecoderFallback;
+                return utf8;
+            }
+
+            return encoding;
         }
 
         [DllImport("kernel32.dll", SetLastError = true)]
