@@ -9,21 +9,36 @@ namespace usbrelay.Sequences
     {
         private readonly string serialNumber;
         private readonly int channel;
+        private readonly string channelName;
         private readonly bool on;
 
         public RelayAction(string serialNumber, int channel, bool on)
         {
             this.serialNumber = serialNumber;
             this.channel = channel;
+            channelName = null;
             this.on = on;
         }
 
-        public IEnumerable<RelayResource> Resources => new[] { new RelayResource(serialNumber, channel) };
+        public RelayAction(string deviceSelector, string namedChannel, bool on)
+        {
+            serialNumber = deviceSelector;
+            channelName = namedChannel;
+            channel = 0;
+            this.on = on;
+        }
+
+        public IEnumerable<RelayResource> Resources => string.IsNullOrEmpty(channelName)
+            ? new[] { new RelayResource(serialNumber, channel) }
+            : new[] { new RelayResource(serialNumber, channelName) };
 
         public void Execute(SequenceExecutionContext context)
         {
-            context.Relay.SetChannel(serialNumber, channel, on);
-            context.Log.Add(serialNumber + " CH" + channel + " -> " + (on ? "ON" : "OFF") + " ok");
+            if (string.IsNullOrEmpty(channelName))
+                context.Relay.SetChannel(serialNumber, channel, on);
+            else
+                context.Relay.SetChannel(serialNumber, channelName, on);
+            context.Log.Add(SequenceLog.Channel(context, serialNumber, channel, channelName) + " -> " + (on ? "ON" : "OFF") + " ok");
         }
     }
 
@@ -50,6 +65,7 @@ namespace usbrelay.Sequences
     {
         private readonly string serialNumber;
         private readonly int channel;
+        private readonly string channelName;
         private readonly RelayState expectedState;
         private readonly int timeoutMilliseconds;
 
@@ -57,22 +73,38 @@ namespace usbrelay.Sequences
         {
             this.serialNumber = serialNumber;
             this.channel = channel;
+            channelName = null;
             this.expectedState = expectedState;
             this.timeoutMilliseconds = timeoutMilliseconds;
         }
 
-        public IEnumerable<RelayResource> Resources => new[] { new RelayResource(serialNumber, channel) };
+        public WaitChannelAction(string deviceSelector, string namedChannel, RelayState expectedState, int timeoutMilliseconds)
+        {
+            serialNumber = deviceSelector;
+            channelName = namedChannel;
+            channel = 0;
+            this.expectedState = expectedState;
+            this.timeoutMilliseconds = timeoutMilliseconds;
+        }
+
+        public IEnumerable<RelayResource> Resources => string.IsNullOrEmpty(channelName)
+            ? new[] { new RelayResource(serialNumber, channel) }
+            : new[] { new RelayResource(serialNumber, channelName) };
 
         public void Execute(SequenceExecutionContext context)
         {
             DateTime deadline = DateTime.UtcNow.AddMilliseconds(timeoutMilliseconds);
             bool expected = expectedState == RelayState.On;
+            string label = SequenceLog.Channel(context, serialNumber, channel, channelName);
 
             while (DateTime.UtcNow <= deadline)
             {
-                if (context.Relay.GetChannelState(serialNumber, channel) == expected)
+                bool isOn = string.IsNullOrEmpty(channelName)
+                    ? context.Relay.GetChannelState(serialNumber, channel)
+                    : context.Relay.GetChannelState(serialNumber, channelName);
+                if (isOn == expected)
                 {
-                    context.Log.Add("wait " + serialNumber + " CH" + channel + " " + expectedState + " ok");
+                    context.Log.Add("wait " + label + " " + expectedState + " ok");
                     return;
                 }
 
@@ -82,7 +114,7 @@ namespace usbrelay.Sequences
                 Thread.Sleep(50);
             }
 
-            throw new InvalidOperationException("Timed out waiting for " + serialNumber + " CH" + channel + " " + expectedState);
+            throw new InvalidOperationException("Timed out waiting for " + label + " " + expectedState);
         }
     }
 
@@ -90,19 +122,32 @@ namespace usbrelay.Sequences
     {
         private readonly string serialNumber;
         private readonly int channel;
+        private readonly string channelName;
 
         public ReadChannelAction(string serialNumber, int channel)
         {
             this.serialNumber = serialNumber;
             this.channel = channel;
+            channelName = null;
         }
 
-        public IEnumerable<RelayResource> Resources => new[] { new RelayResource(serialNumber, channel) };
+        public ReadChannelAction(string deviceSelector, string namedChannel)
+        {
+            serialNumber = deviceSelector;
+            channelName = namedChannel;
+            channel = 0;
+        }
+
+        public IEnumerable<RelayResource> Resources => string.IsNullOrEmpty(channelName)
+            ? new[] { new RelayResource(serialNumber, channel) }
+            : new[] { new RelayResource(serialNumber, channelName) };
 
         public void Execute(SequenceExecutionContext context)
         {
-            bool on = context.Relay.GetChannelState(serialNumber, channel);
-            context.Log.Add(serialNumber + " CH" + channel + " read " + (on ? "ON" : "OFF"));
+            bool on = string.IsNullOrEmpty(channelName)
+                ? context.Relay.GetChannelState(serialNumber, channel)
+                : context.Relay.GetChannelState(serialNumber, channelName);
+            context.Log.Add(SequenceLog.Channel(context, serialNumber, channel, channelName) + " read " + (on ? "ON" : "OFF"));
         }
     }
 
@@ -180,6 +225,29 @@ namespace usbrelay.Sequences
         public void Execute(SequenceExecutionContext context)
         {
             throw new InvalidOperationException(message);
+        }
+    }
+
+    internal static class SequenceLog
+    {
+        public static string Channel(SequenceExecutionContext context, string deviceSelector, int channel, string channelName)
+        {
+            var display = context.Relay as ISequenceRelayDisplay;
+            if (display != null)
+            {
+                try
+                {
+                    return string.IsNullOrEmpty(channelName)
+                        ? display.DescribeChannel(deviceSelector, channel)
+                        : display.DescribeChannel(deviceSelector, channelName);
+                }
+                catch (Exception)
+                {
+                    // The operation itself reports the authoritative device/channel error.
+                }
+            }
+
+            return deviceSelector + " " + (string.IsNullOrEmpty(channelName) ? "CH" + channel : channelName);
         }
     }
 }

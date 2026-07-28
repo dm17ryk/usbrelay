@@ -209,11 +209,13 @@
     <Compile Include="IRelayBackend.cs" />
     <Compile Include="MainLayoutSettings.cs" />
     <Compile Include="MainForm.cs" />
+    <Compile Include="DeviceNamingForm.cs" />
     <Compile Include="NativeUsbRelayBackend.cs" />
     <Compile Include="Operations.cs" />
     <Compile Include="ParsedCliCommand.cs" />
     <Compile Include="RelayDevice.cs" />
     <Compile Include="RelayDeviceType.cs" />
+    <Compile Include="RelayNamingRepository.cs" />
     <Compile Include="RelayService.cs" />
     <Compile Include="SequenceCli.cs" />
     <Compile Include="SequenceCompletionProvider.cs" />

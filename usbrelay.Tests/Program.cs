@@ -28,14 +28,18 @@ namespace usbrelay.Tests
             {
                 SequenceRepository_RoundTripsSequencesAsJson,
                 SequenceParser_ParsesDslAndResources,
+                SequenceParser_ParsesNamedDeviceAndChannel,
                 SequenceCompletionProvider_SuggestsSequenceCommands,
                 SequenceCompletionProvider_SuggestsRelayStateValues,
                 SequenceCompletionProvider_UsesConnectedDeviceChannels,
+                SequenceCompletionProvider_SuggestsNamedDeviceAndChannel,
                 SequenceCompletionProvider_FallsBackWhenNoDevicesAreConnected,
                 SequenceCompletionProvider_SuggestsOutputMatchesForToolVariables,
                 SequenceParseCache_ReusesParseUntilScriptChanges,
                 SequenceResourceLocks_BlockOverlappingChannelsOnly,
+                SequenceResourceLocks_DistinguishesDuplicateSerialDevicePaths,
                 SequenceRunner_ExecutesRegexSuccessBranchWithFakeRelayAndTool,
+                SequenceRunner_LogsFriendlyDeviceAndChannelNames,
                 ProcessExternalToolRunner_DoesNotDeadlockWhenStderrPipeFills,
                 Program_SelectStartupMode_UsesCliForTerminalWithoutArguments,
                 Program_SelectStartupMode_UsesGuiForNonTerminalWithoutArguments,
@@ -47,6 +51,9 @@ namespace usbrelay.Tests
                 Program_ParseCliCommand_RecognizesVersionAliases,
                 Program_ParseCliCommand_MapsLegacyRelayOptions,
                 Program_ParseCliCommand_ParsesMultiValueChannels,
+                Program_ParseCliCommand_ParsesDevicePathSelector,
+                Program_ParseCliCommand_ParsesFriendlySelectors,
+                Program_ParseCliCommand_ParsesNameUpdateOptions,
                 Program_ParseCliCommand_RejectsGuiWithRelayOptions,
                 Program_CompletionSuggestsTopLevelOptions,
                 Program_CompletionSuggestsMatchingOptions,
@@ -71,6 +78,7 @@ namespace usbrelay.Tests
                 Program_ReopenedConsoleUtf8EncodingPreservesFallbacks,
                 SequenceCli_QueryListsSavedSequences,
                 SequenceCli_QueryByNamePrintsDetails,
+                SequenceCli_AddReadModifyAndPrintsFunctions,
                 SequenceCli_QueryTableHasSeparatorLine,
                 SequenceCli_StatusReportsReadySequence,
                 SequenceCli_StatusFailsWhenRelayResourceIsMissing,
@@ -86,6 +94,7 @@ namespace usbrelay.Tests
                 SequenceCli_RunFailsGracefullyWhenRepositoryCannotLoad,
                 MainForm_LoadsSavedSequencesIntoVisibleRows,
                 MainForm_RunButtonClickExecutesVisibleSequence,
+                MainForm_DisablesBusySequenceRunButton,
                 MainForm_RemoveSequenceCancelKeepsSequence,
                 MainForm_RemoveSequenceConfirmDeletesSequence,
                 MainForm_AllOffRefreshesDevicesOnceAfterChannelUpdates,
@@ -93,7 +102,13 @@ namespace usbrelay.Tests
                 MainForm_SavesLayoutSettings,
                 SequenceEditorLayoutSettings_RoundTripsWindowAndSplitter,
                 SequenceEditorForm_StoresConnectedDevicesForCompletion,
-                SequenceEditorForm_SavesLayoutSettings
+                SequenceEditorForm_SavesLayoutSettings,
+                RelayNamingRepository_RoundTripsFriendlyNames,
+                RelayService_RoutesByFriendlyDeviceAndChannelNames,
+                RelayService_UpdatesFriendlyNames,
+                DeviceNamingForm_PopulatesExistingFriendlyNames,
+                DeviceNamingForm_PreservesSeparateDeviceValuesWhenSwitching,
+                UsbRelayWrapper_StatusAlignsDevicePathColumn
             };
 
             foreach (var test in tests)
@@ -143,6 +158,19 @@ namespace usbrelay.Tests
             AssertTrue(result.Resources.Contains(new RelayResource("6QMBS", 1)), "CH1 resource should be claimed");
         }
 
+        private static void SequenceParser_ParsesNamedDeviceAndChannel()
+        {
+            var result = SequenceParser.Parse(string.Join(Environment.NewLine, new[]
+            {
+                "sequence.PowerOn(\"DUT Power\", \"Main relay\");",
+                "sequence.ReadChannel(\"DUT Power\", \"Main relay\");",
+                "sequence.WaitChannel(\"DUT Power\", \"Main relay\", RelayState.On, 3000);"
+            }));
+
+            AssertTrue(result.IsValid, "Named device/channel script should validate");
+            AssertTrue(result.Resources.Contains(new RelayResource("DUT Power", "Main relay")), "Named channel resource should be claimed");
+        }
+
         private static void SequenceCompletionProvider_SuggestsSequenceCommands()
         {
             var result = SequenceCompletionProvider.GetCompletions("sequence.", "sequence.".Length, new RelayDevice[0], force: false);
@@ -172,6 +200,24 @@ namespace usbrelay.Tests
 
             AssertContains(completions, "PowerOn(\"ABC123\", 4)", "Connected device channel completion");
             AssertFalse(completions.Contains("PowerOn(\"6QMBS\", 1)"), "Fallback serial should not be used when connected devices exist");
+        }
+
+        private static void SequenceCompletionProvider_SuggestsNamedDeviceAndChannel()
+        {
+            var devices = new[]
+            {
+                new RelayDevice(
+                    "6QMBS",
+                    RelayDeviceType.EightChannel,
+                    8,
+                    0,
+                    "hid#board-a",
+                    "DUT Power",
+                    new Dictionary<int, string> { { 1, "Main relay" } })
+            };
+            var result = SequenceCompletionProvider.GetCompletions("sequence.", "sequence.".Length, devices, force: false);
+
+            AssertContains(result.Items.Select(item => item.Text), "PowerOn(\"DUT Power\", \"Main relay\")", "Named channel completion");
         }
 
         private static void SequenceCompletionProvider_FallsBackWhenNoDevicesAreConnected()
@@ -226,6 +272,24 @@ namespace usbrelay.Tests
             AssertTrue(locks.TryReserve("after-release", channel1), "Released channel should be available");
         }
 
+        private static void SequenceResourceLocks_DistinguishesDuplicateSerialDevicePaths()
+        {
+            var locks = new SequenceResourceLocks();
+            var firstBoard = new[] { new RelayResource("BITFT", 1, "hid#board-a") };
+            var secondBoard = new[] { new RelayResource("BITFT", 1, "hid#board-b") };
+
+            AssertTrue(locks.TryReserve("first-board", firstBoard), "First duplicate-serial board should reserve CH1");
+            AssertTrue(locks.TryReserve("second-board", secondBoard), "Second duplicate-serial board should reserve CH1 independently");
+            AssertTrue(
+                new RelayResource("BITFT", 1, "hid#board-a")
+                    .Equals(new RelayResource("BITFT", 1, "hid#board-a")),
+                "The same board path should remain equal");
+            AssertFalse(
+                new RelayResource("BITFT", 1, "hid#board-a")
+                    .Equals(new RelayResource("BITFT", 1, "hid#board-b")),
+                "Different board paths must not compare equal");
+        }
+
         private static void SequenceRunner_ExecutesRegexSuccessBranchWithFakeRelayAndTool()
         {
             string script = string.Join(Environment.NewLine, new[]
@@ -247,6 +311,30 @@ namespace usbrelay.Tests
             AssertFalse(relay.GetChannelState("6QMBS", 1), "CH1 should be off");
             AssertTrue(relay.GetChannelState("6QMBS", 2), "CH2 should be on after success branch");
             AssertTrue(result.Log.Any(line => line.Contains("OutputMatches READY|OK: success")), "Regex match should be logged");
+        }
+
+        private static void SequenceRunner_LogsFriendlyDeviceAndChannelNames()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "device-names.json");
+            var device = new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0, "hid#board-a");
+            var repository = new RelayNamingRepository(path);
+            var configuration = new RelayNamingConfiguration();
+            configuration.Devices.Add(new RelayDeviceNaming
+            {
+                DeviceKey = RelayNamingRepository.GetDeviceKey(device),
+                Name = "DUT Power",
+                Channels = new List<RelayChannelNaming> { new RelayChannelNaming { Channel = 1, Name = "Main relay" } }
+            });
+            repository.Save(configuration);
+
+            var result = SequenceRunner.Run(
+                SequenceParser.Parse("sequence.PowerOn(\"6QMBS\", 1);"),
+                new RelaySequenceBackend(new RelayService(new FakeRelayBackend(device), repository)),
+                new FakeExternalToolRunner(string.Empty),
+                skipDelays: true);
+
+            AssertTrue(result.Success, "Friendly-name sequence should succeed");
+            AssertTrue(result.Log.Any(line => line.Contains("DUT Power Main relay (CH1) -> ON ok")), "Sequence log should use friendly device and channel names");
         }
 
         private static void ProcessExternalToolRunner_DoesNotDeadlockWhenStderrPipeFills()
@@ -329,6 +417,45 @@ namespace usbrelay.Tests
             AssertSequence(new[] { 4, 5 }, GetProperty<IEnumerable<int>>(command, "OffChannels"), "Off channels");
         }
 
+        private static void Program_ParseCliCommand_ParsesDevicePathSelector()
+        {
+            object command = ParseCliCommand(new[] { "--device-path", "hid#board-b", "--on", "1" });
+
+            AssertTrue(GetProperty<bool>(command, "IsValid"), "Device path selector should be valid");
+            AssertEqual("hid#board-b", GetProperty<string>(command, "DevicePath"), "Device path option");
+            AssertEqual("ONOFF", GetProperty<object>(command, "Operation").ToString(), "Relay operation");
+        }
+
+        private static void Program_ParseCliCommand_ParsesFriendlySelectors()
+        {
+            object command = ParseCliCommand(new[]
+            {
+                "--device-name", "DUT Power",
+                "--on-name", "Main relay", "Aux relay",
+                "--off-name", "Fan"
+            });
+
+            AssertTrue(GetProperty<bool>(command, "IsValid"), "Friendly selectors should be valid");
+            AssertEqual("DUT Power", GetProperty<string>(command, "DeviceName"), "Device name option");
+            AssertSequence(new[] { "Main relay", "Aux relay" }, GetProperty<IEnumerable<string>>(command, "OnChannelNames"), "Named on channels");
+            AssertSequence(new[] { "Fan" }, GetProperty<IEnumerable<string>>(command, "OffChannelNames"), "Named off channels");
+        }
+
+        private static void Program_ParseCliCommand_ParsesNameUpdateOptions()
+        {
+            object command = ParseCliCommand(new[]
+            {
+                "--device-path", "hid#board-a",
+                "--set-device-name", "DUT Power",
+                "--set-channel-name", "1", "Main relay", "2", "Debug"
+            });
+
+            AssertTrue(GetProperty<bool>(command, "IsValid"), "Name update options should be valid");
+            AssertEqual("NAMES", GetProperty<object>(command, "Operation").ToString(), "Name update operation");
+            AssertEqual("DUT Power", GetProperty<string>(command, "SetDeviceName"), "Set device name option");
+            AssertSequence(new[] { "1", "Main relay", "2", "Debug" }, GetProperty<IEnumerable<string>>(command, "SetChannelNamePairs"), "Set channel name pairs");
+        }
+
         private static void Program_ParseCliCommand_RejectsGuiWithRelayOptions()
         {
             object command = ParseCliCommand(new[] { "--gui", "-list" });
@@ -344,6 +471,12 @@ namespace usbrelay.Tests
             AssertContains(completions, "--list", "Top-level completions should include --list");
             AssertContains(completions, "--status", "Top-level completions should include --status");
             AssertContains(completions, "--serial", "Top-level completions should include --serial");
+            AssertContains(completions, "--device-path", "Top-level completions should include --device-path");
+            AssertContains(completions, "--device-name", "Top-level completions should include --device-name");
+            AssertContains(completions, "--set-device-name", "Top-level completions should include --set-device-name");
+            AssertContains(completions, "--set-channel-name", "Top-level completions should include --set-channel-name");
+            AssertContains(completions, "--on-name", "Top-level completions should include --on-name");
+            AssertContains(completions, "--off-name", "Top-level completions should include --off-name");
             AssertContains(completions, "--gui", "Top-level completions should include --gui");
             AssertFalse(completions.Contains("list"), "Top-level completions should not include bare option names");
         }
@@ -383,8 +516,12 @@ namespace usbrelay.Tests
             string[] completions = RunCompletion("usbrelay sequence ");
 
             AssertContains(completions, "query", "Sequence completions should include query");
+            AssertContains(completions, "read", "Sequence completions should include read");
+            AssertContains(completions, "add", "Sequence completions should include add");
+            AssertContains(completions, "modify", "Sequence completions should include modify");
             AssertContains(completions, "status", "Sequence completions should include status");
             AssertContains(completions, "run", "Sequence completions should include run");
+            AssertContains(completions, "functions", "Sequence completions should include functions");
         }
 
         private static void Program_CompletionSuggestsLegacyAliases()
@@ -453,6 +590,9 @@ namespace usbrelay.Tests
 
             AssertEqual(0, result.ExitCode, "--help exit code");
             AssertTrue(result.Output.Contains("usbrelay sequence query"), "Help should include sequence query example");
+            AssertTrue(result.Output.Contains("usbrelay sequence add"), "Help should include sequence add example");
+            AssertTrue(result.Output.Contains("usbrelay sequence modify"), "Help should include sequence modify example");
+            AssertTrue(result.Output.Contains("usbrelay sequence functions"), "Help should include sequence functions example");
             AssertTrue(result.Output.Contains("usbrelay sequence status --name"), "Help should include sequence status example");
             AssertTrue(result.Output.Contains("usbrelay sequence run --name"), "Help should include sequence run example");
         }
@@ -491,6 +631,10 @@ namespace usbrelay.Tests
             AssertTrue(ShouldWriteInteractiveSequenceSeparator("status", false), "Interactive sequence status should start on a clean line");
             AssertTrue(ShouldWriteInteractiveSequenceSeparator("run", false), "Interactive sequence run should start on a clean line");
             AssertFalse(ShouldWriteInteractiveSequenceSeparator("query", true), "Redirected sequence query should not get an extra leading line");
+            AssertTrue(ShouldWriteInteractiveSequenceSeparator("read", false), "Interactive sequence read should start on a clean line");
+            AssertTrue(ShouldWriteInteractiveSequenceSeparator("add", false), "Interactive sequence add should start on a clean line");
+            AssertTrue(ShouldWriteInteractiveSequenceSeparator("modify", false), "Interactive sequence modify should start on a clean line");
+            AssertTrue(ShouldWriteInteractiveSequenceSeparator("functions", false), "Interactive sequence functions should start on a clean line");
             AssertFalse(ShouldWriteInteractiveSequenceSeparator("status", true), "Redirected sequence status should not get an extra leading line");
             AssertFalse(ShouldWriteInteractiveSequenceSeparator("run", true), "Redirected sequence run should not get an extra leading line");
             AssertFalse(ShouldWriteInteractiveSequenceSeparator("unknown", false), "Unknown sequence command should not get an extra leading line");
@@ -755,6 +899,50 @@ namespace usbrelay.Tests
             AssertTrue(output.ToString().Contains("Script:"), "Query detail should keep script section");
         }
 
+        private static void SequenceCli_AddReadModifyAndPrintsFunctions()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "sequences.json");
+            var repository = new SequenceRepository(path);
+            var output = new StringWriter();
+            var error = new StringWriter();
+            var cli = new SequenceCli(
+                repository,
+                new FakeRelayBackend(new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0)),
+                new FakeExternalToolRunner(string.Empty),
+                output,
+                error);
+
+            AssertEqual(
+                0,
+                cli.Add("CLI sequence", "sequence.PowerOn(\"6QMBS\", 1);", null, "Power", "Created from CLI"),
+                "Sequence add exit code");
+            AssertEqual(1, repository.Load().Count, "Sequence add should persist one sequence");
+            AssertEqual("Created from CLI", repository.Load().Single().Description, "Sequence add description");
+
+            output.GetStringBuilder().Clear();
+            AssertEqual(0, cli.Read("CLI sequence"), "Sequence read exit code");
+            AssertTrue(output.ToString().Contains("Script:"), "Sequence read should print details");
+
+            output.GetStringBuilder().Clear();
+            AssertEqual(
+                0,
+                cli.Modify("CLI sequence", "CLI sequence v2", "sequence.PowerOff(\"6QMBS\", 1);", null, "Power off", "Modified from CLI"),
+                "Sequence modify exit code");
+            SequenceDefinition modified = repository.Load().Single();
+            AssertEqual("CLI sequence v2", modified.Name, "Sequence modify name");
+            AssertEqual("Power off", modified.RunButtonText, "Sequence modify run button");
+            AssertEqual("Modified from CLI", modified.Description, "Sequence modify description");
+            AssertEqual("sequence.PowerOff(\"6QMBS\", 1);", modified.Script, "Sequence modify script");
+
+            output.GetStringBuilder().Clear();
+            AssertEqual(0, cli.Functions(), "Sequence functions exit code");
+            AssertTrue(output.ToString().Contains("sequence.PowerOn"), "Functions should list PowerOn");
+            AssertTrue(output.ToString().Contains("sequence.RunTool"), "Functions should list RunTool");
+            AssertTrue(output.ToString().Contains("OutputMatches"), "Functions should list OutputMatches");
+            AssertTrue(output.ToString().Contains("RelayState.On"), "Functions should list RelayState values");
+            AssertEqual(string.Empty, error.ToString(), "Sequence CRUD stderr");
+        }
+
         private static void SequenceCli_StatusWritesReadinessInSingleOutputCall()
         {
             var output = new RecordingTextWriter();
@@ -952,6 +1140,52 @@ namespace usbrelay.Tests
             }
         }
 
+        private static void MainForm_DisablesBusySequenceRunButton()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "sequences.json");
+            var repository = new SequenceRepository(path);
+            repository.Save(new[]
+            {
+                new SequenceDefinition
+                {
+                    Name = "Busy sequence",
+                    RunButtonText = "Run",
+                    Description = "Busy test",
+                    Script = "sequence.PowerOn(\"BUSYTEST\", 1);" + Environment.NewLine + "sequence.Sleep(1200);" + Environment.NewLine + "sequence.PowerOff(\"BUSYTEST\", 1);"
+                }
+            });
+
+            var relay = new FakeRelayBackend(new RelayDevice("BUSYTEST", RelayDeviceType.EightChannel, 8, 0));
+            using (var form = new MainForm(relay, repository))
+            {
+                IntPtr formHandle = form.Handle;
+                InvokePrivate(form, "RefreshDevices");
+                InvokePrivate(form, "LoadSequences");
+                var sequenceList = (DataGridView)GetPrivateField(form, "sequenceGrid");
+                var statusGrid = (DataGridView)GetPrivateField(form, "statusGrid");
+                var devicesPanel = (FlowLayoutPanel)GetPrivateField(form, "devicesPanel");
+                var channelButton = (Button)((FlowLayoutPanel)devicesPanel.Controls[0].Controls[0]).Controls[0];
+                int runColumnIndex = sequenceList.Columns["RunColumn"].Index;
+
+                InvokePrivate(form, "SequenceGrid_CellClick", sequenceList, new DataGridViewCellEventArgs(runColumnIndex, 0));
+                AssertEqual("Busy", sequenceList.Rows[0].Cells["RunColumn"].Value, "Sequence run button should show Busy immediately");
+                AssertTrue(sequenceList.Rows[0].Cells["RunColumn"].ReadOnly, "Busy sequence run button should be disabled");
+                AssertFalse(channelButton.Enabled, "Busy sequence channel button should be disabled");
+
+                WaitUntil(() => string.Equals(sequenceList.Rows[0].Cells["RunColumn"].Value as string, "Run", StringComparison.Ordinal), "Sequence run button should be restored after completion");
+                AssertFalse(sequenceList.Rows[0].Cells["RunColumn"].ReadOnly, "Completed sequence run button should be enabled");
+                var refreshedChannelButton = (Button)((FlowLayoutPanel)devicesPanel.Controls[0].Controls[0]).Controls[0];
+                AssertTrue(refreshedChannelButton.Enabled, "Completed sequence channel button should be enabled");
+
+                relay.SetChannel(new RelayDevice("BUSYTEST", RelayDeviceType.EightChannel, 8, 0), 1, true);
+                InvokePrivate(form, "RefreshDeviceStatusTable");
+                AssertTrue(((statusGrid.Rows[0].Cells[4].Value as string) ?? string.Empty).Contains("ON"), "Status table should show a refreshed ON state");
+                relay.SetChannel(new RelayDevice("BUSYTEST", RelayDeviceType.EightChannel, 8, 0), 1, false);
+                InvokePrivate(form, "RefreshDeviceStatusTable");
+                AssertTrue(((statusGrid.Rows[0].Cells[4].Value as string) ?? string.Empty).Contains("OFF"), "Status table should show a refreshed OFF state");
+            }
+        }
+
         private static void MainForm_RemoveSequenceCancelKeepsSequence()
         {
             string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "sequences.json");
@@ -1134,6 +1368,173 @@ namespace usbrelay.Tests
             AssertEqual(920, loaded.Width, "Editor form saved Width");
             AssertEqual(600, loaded.Height, "Editor form saved Height");
             AssertEqual(300, loaded.SplitterDistance, "Editor form saved SplitterDistance");
+        }
+
+        private static void RelayNamingRepository_RoundTripsFriendlyNames()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "device-names.json");
+            var repository = new RelayNamingRepository(path);
+            var device = new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0, "hid#board-a");
+            var configuration = new RelayNamingConfiguration();
+            configuration.Devices.Add(new RelayDeviceNaming
+            {
+                DeviceKey = RelayNamingRepository.GetDeviceKey(device),
+                Name = "DUT Power",
+                Channels = new List<RelayChannelNaming>
+                {
+                    new RelayChannelNaming { Channel = 1, Name = "Main relay" }
+                }
+            });
+
+            repository.Save(configuration);
+            RelayDevice named = repository.Apply(new[] { device }).Single();
+
+            AssertEqual("DUT Power", named.DeviceName, "Friendly device name");
+            AssertEqual("Main relay", named.GetChannelName(1), "Friendly channel name");
+            AssertEqual(1, named.ResolveChannel("main relay"), "Case-insensitive named channel lookup");
+            AssertTrue(named.MatchesSelector("DUT Power"), "Friendly device selector");
+        }
+
+        private static void RelayService_RoutesByFriendlyDeviceAndChannelNames()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "device-names.json");
+            var device = new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0, "hid#board-a");
+            var repository = new RelayNamingRepository(path);
+            var configuration = new RelayNamingConfiguration();
+            configuration.Devices.Add(new RelayDeviceNaming
+            {
+                DeviceKey = RelayNamingRepository.GetDeviceKey(device),
+                Name = "DUT Power",
+                Channels = new List<RelayChannelNaming>
+                {
+                    new RelayChannelNaming { Channel = 1, Name = "Main relay" }
+                }
+            });
+            repository.Save(configuration);
+
+            var fake = new FakeRelayBackend(device);
+            var sequenceBackend = new RelaySequenceBackend(new RelayService(fake, repository));
+            sequenceBackend.SetChannel("DUT Power", "Main relay", true);
+
+            AssertTrue(fake.GetChannelState("6QMBS", 1), "Friendly device/channel should route to CH1");
+        }
+
+        private static void RelayService_UpdatesFriendlyNames()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "device-names.json");
+            var device = new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0, "hid#board-a");
+            var repository = new RelayNamingRepository(path);
+            var service = new RelayService(new FakeRelayBackend(device), repository);
+
+            service.UpdateNames("hid#board-a", "DUT Power", new[] { "1", "Main relay", "2", "Debug" });
+            RelayDevice named = service.EnumerateDevices().Single();
+
+            AssertEqual("DUT Power", named.DeviceName, "Updated device name");
+            AssertEqual("Main relay", named.GetChannelName(1), "Updated first channel name");
+            AssertEqual("Debug", named.GetChannelName(2), "Updated second channel name");
+        }
+
+        private static void DeviceNamingForm_PopulatesExistingFriendlyNames()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "device-names.json");
+            var repository = new RelayNamingRepository(path);
+            var device = new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0, "hid#board-a");
+            var configuration = new RelayNamingConfiguration();
+            configuration.Devices.Add(new RelayDeviceNaming
+            {
+                DeviceKey = RelayNamingRepository.GetDeviceKey(device),
+                Name = "DUT Power",
+                Channels = new List<RelayChannelNaming>
+                {
+                    new RelayChannelNaming { Channel = 1, Name = "Main relay" }
+                }
+            });
+            repository.Save(configuration);
+
+            using (var form = new DeviceNamingForm(new[] { device }, repository))
+            {
+                var deviceNameEditor = (TextBox)GetPrivateField(form, "deviceNameEditor");
+                var channelEditors = (Dictionary<int, TextBox>)GetPrivateField(form, "channelEditors");
+                AssertTrue(form.GetType().GetProperty("Icon").GetValue(form, null) != null, "Naming form should use the application icon");
+                AssertEqual("DUT Power", deviceNameEditor.Text, "Existing device name should populate");
+                AssertEqual("Main relay", channelEditors[1].Text, "Existing channel name should populate");
+            }
+        }
+
+        private static void DeviceNamingForm_PreservesSeparateDeviceValuesWhenSwitching()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "device-names.json");
+            var repository = new RelayNamingRepository(path);
+            var first = new RelayDevice("FIRST", RelayDeviceType.TwoChannel, 2, 0, "hid#board-a");
+            var second = new RelayDevice("SECOND", RelayDeviceType.TwoChannel, 2, 0, "hid#board-b");
+            var configuration = new RelayNamingConfiguration();
+            configuration.Devices.Add(new RelayDeviceNaming
+            {
+                DeviceKey = RelayNamingRepository.GetDeviceKey(first),
+                Name = "First board",
+                Channels = new List<RelayChannelNaming> { new RelayChannelNaming { Channel = 1, Name = "First channel" } }
+            });
+            configuration.Devices.Add(new RelayDeviceNaming
+            {
+                DeviceKey = RelayNamingRepository.GetDeviceKey(second),
+                Name = "Second board",
+                Channels = new List<RelayChannelNaming> { new RelayChannelNaming { Channel = 1, Name = "Second channel" } }
+            });
+            repository.Save(configuration);
+
+            using (var form = new DeviceNamingForm(new[] { first, second }, repository))
+            {
+                var selector = (ComboBox)GetPrivateField(form, "deviceSelector");
+                var deviceNameEditor = (TextBox)GetPrivateField(form, "deviceNameEditor");
+                var channelEditors = (Dictionary<int, TextBox>)GetPrivateField(form, "channelEditors");
+                deviceNameEditor.Text = "First board edited";
+                selector.SelectedIndex = 1;
+
+                AssertEqual("Second board", deviceNameEditor.Text, "Second device name should not copy first device name");
+                AssertEqual("Second channel", channelEditors[1].Text, "Second channel name should not copy first device channel");
+
+                selector.SelectedIndex = 0;
+                AssertEqual("First board edited", deviceNameEditor.Text, "First device edit should be retained after switching back");
+            }
+        }
+
+        private static void UsbRelayWrapper_StatusAlignsDevicePathColumn()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "device-names.json");
+            var repository = new RelayNamingRepository(path);
+            var first = new RelayDevice(
+                "6QMBS",
+                RelayDeviceType.EightChannel,
+                8,
+                0,
+                "hid#board-a",
+                "power",
+                new Dictionary<int, string> { { 1, "power" }, { 2, "dbg" } });
+            var second = new RelayDevice("OTHER", RelayDeviceType.TwoChannel, 2, 0, "hid#board-b", "Buttons", null);
+            Type wrapperType = typeof(MainForm).Assembly.GetType("usbrelay.UsbRelayWrapper", true);
+            object wrapper = Activator.CreateInstance(
+                wrapperType,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                null,
+                new object[] { string.Empty, string.Empty, string.Empty, new RelayService(new FakeRelayBackend(first, second), repository) },
+                null);
+            var output = new StringWriter();
+            TextWriter previous = Console.Out;
+            try
+            {
+                Console.SetOut(output);
+                wrapperType.GetMethod("status", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic).Invoke(wrapper, null);
+            }
+            finally
+            {
+                Console.SetOut(previous);
+            }
+
+            string[] lines = output.ToString().Split(new[] { Environment.NewLine }, StringSplitOptions.RemoveEmptyEntries);
+            AssertTrue(lines.Length >= 4, "Status should contain header, separator, and device rows");
+            AssertTrue(lines[0].Contains("Device Path"), "Status header should include Device Path");
+            AssertEqual(lines[0].IndexOf("Device Path", StringComparison.Ordinal), lines[2].IndexOf("hid#board-a", StringComparison.Ordinal), "Device path column alignment");
+            AssertEqual(lines[0].IndexOf("CH1", StringComparison.Ordinal), lines[2].IndexOf("power=OFF", StringComparison.Ordinal), "Channel column alignment");
         }
 
         private static void InvokePrivate(object instance, string methodName, params object[] arguments)
@@ -1642,6 +2043,26 @@ namespace usbrelay.Tests
             }
 
             public void SetChannel(string serialNumber, int channel, bool on)
+            {
+                throw exception;
+            }
+
+            public void SetChannel(RelayDevice device, int channel, bool on)
+            {
+                throw exception;
+            }
+
+            public void SetChannel(string deviceSelector, string channelName, bool on)
+            {
+                throw exception;
+            }
+
+            public bool GetChannelState(string serialNumber, int channel)
+            {
+                throw exception;
+            }
+
+            public bool GetChannelState(string deviceSelector, string channelName)
             {
                 throw exception;
             }

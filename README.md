@@ -10,9 +10,36 @@ The binary provided is a stand-alone executable. All required dynamic link libra
 
 To build this project, please add [Costura.Fody](https://github.com/Fody/Costura) to the project. (Right click 'usbrelay' project in Visual Studio. Select 'Manage NuGet Packages...')
 
-# serial numbers of the USB-Relay boards
+## Identifying and naming USB-Relay boards
 
-Most likely, the boards from Amazon, eBay or other places will come with serial number "BITFT". This will be an issue when two or more USB-Relay boards need to be connected to the same computer. Unique serial numbers need to be assigned to each board.
+Many boards use the same serial number, such as `BITFT` or `6QMBS`. The application enumerates every connected board and keeps its complete Windows HID device path. The path uniquely identifies a board even when serial numbers are duplicated.
+
+Run `usbrelay --list` to see all boards. In the GUI, click **Edit names** to assign a friendly device name and optional names to its channels. Names are stored in `%APPDATA%\usbrelay\device-names.json` and are keyed by the unique device path, so adding more boards does not require changing the application.
+
+For the two boards in the example, the unique path portions are `1746991` and `2a5582f3`. After assigning names such as `DUT power` and `Fan power`, use those names from the CLI:
+
+```
+usbrelay --list
+usbrelay --device-name "DUT power" --on-name "Main relay"
+usbrelay --device-name "Fan power" --off-name "Cooling fan"
+usbrelay --device-path "<full path from --list>" --set-device-name "DUT power"
+usbrelay --device-name "DUT power" --set-channel-name 1 "Main relay" 2 Debug
+```
+
+Numeric selectors remain available. The full device path can also be used when no friendly name has been configured:
+
+```
+usbrelay --device-path "<full path from --list>" --on 1
+```
+
+Device names must be unique. Channel names must be unique within each device. If a device has no configured channel name, the GUI and `--list` display `CH1`, `CH2`, and so on.
+
+Names can also be changed from the CLI. Use `--serial` or `--device-path` when assigning the first device name; use the existing `--device-name` when renaming an already named device. Channel updates are supplied as repeated channel/name pairs:
+
+```
+usbrelay --serial 6QMBS --set-device-name "DUT power"
+usbrelay --device-name "DUT power" --set-channel-name 1 "Main relay" 2 Debug
+```
 
 The easiest way to do this is to use a Linux box. For example, a Raspberry Pi. 
 
@@ -42,6 +69,30 @@ NEWBN_2=0
 
 [Version 1.0.0.3](https://github.com/mxcoppell/usbrelay/releases/tag/1.0.0.3) - [usbrelay-v1.0.0.3.zip](https://github.com/mxcoppell/usbrelay/releases/download/1.0.0.3/usbrelay-v1.0.0.3.zip)
 
+## Creating a release
+
+The release script increments the fourth version component by default, builds
+the `Release` configuration, runs the tests, creates the portable ZIP, and
+creates the NSIS installer in `artifacts\release`:
+
+```powershell
+.\scripts\Release.ps1
+```
+
+Other version increments are available:
+
+```powershell
+.\scripts\Release.ps1 -Increment Patch
+.\scripts\Release.ps1 -Increment Minor
+.\scripts\Release.ps1 -Increment Major
+.\scripts\Release.ps1 -Version 1.1.0.0
+```
+
+Use `-WhatIf` to preview the version change without modifying files or
+building. The script restores `Version.props` automatically if the build or
+installer step fails. It does not create a Git commit or tag; create and push
+the matching tag separately when the artifacts are verified.
+
 # current state
 
 Current version is implemented in C# (VS2019). Porting to other platforms should be straightfoward. 
@@ -60,8 +111,14 @@ Options:
   --list             List all available serial numbers of connected USB-Relay devices.
   --status           Display relay channel status for connected USB-Relay devices.
   --serial <serial>  Specify the serial number of the USB-Relay device to operate.
+  --device-path <path> Specify the unique device path shown by --list.
+  --device-name <name> Specify the friendly device name configured in the GUI.
+  --set-device-name <name> Set/update the friendly name for the selected device.
+  --set-channel-name <pairs> Set channel names as `<channel> <name>` pairs.
   --on <on>          Turn on the relay channels specified.
+  --on-name <name>   Turn on named relay channels specified.
   --off <off>        Turn off the relay channels specified.
+  --off-name <name>  Turn off named relay channels specified.
   --gui              Start the graphical user interface from a terminal.
   -?, -h, --help     Show help and usage information
   --version          Show version information
@@ -73,6 +130,10 @@ Examples:
   usbrelay --list
   usbrelay --status
   usbrelay --serial BITFT --on 1
+  usbrelay --device-name "DUT power" --on-name "Main relay"
+  usbrelay --device-name "Fan power" --off-name "Cooling fan"
+  usbrelay --device-path "<path from --list>" --set-device-name "DUT power"
+  usbrelay --device-name "DUT power" --set-channel-name 1 "Main relay" 2 Debug
   usbrelay --serial BITFT --on 1 2 3
   usbrelay --serial BITFT --off 2
   usbrelay --serial BITFT --on 1 3 5 --off 2 4 6
@@ -88,22 +149,49 @@ alias for `--version`.
 
 # sequence CLI
 
-Saved GUI sequences can be inspected and run from the command line with the
-`sequence` command group. The CLI only uses sequences saved by the GUI in the
-local sequence repository; it does not accept inline script text.
+Saved GUI sequences can be inspected, created, modified, and run from the
+command line with the `sequence` command group. The CLI uses the same local
+sequence repository as the GUI.
 
 ```
 usbrelay sequence query
 usbrelay sequence query --name "Power cycle DUT"
+usbrelay sequence read --name "Power cycle DUT"
+usbrelay sequence add --name "Power cycle DUT" --script-file .\power-cycle.sequence --run-button "Power cycle"
+usbrelay sequence modify --name "Power cycle DUT" --new-name "Power cycle DUT v2" --script-file .\power-cycle-v2.sequence
 usbrelay sequence status
 usbrelay sequence status --name "Power cycle DUT"
 usbrelay sequence run --name "Power cycle DUT"
+usbrelay sequence functions
 ```
 
 `query` prints saved sequence summaries, or one detailed sequence when `--name`
-is provided. `status` validates saved scripts and checks their relay resources
+is provided. `read` prints one detailed sequence and requires `--name`. `add`
+creates a sequence; provide either `--script "..."` or `--script-file <path>`.
+`modify` updates any supplied fields (`--new-name`, `--script` or
+`--script-file`, `--run-button`, and `--description`) and leaves omitted fields
+unchanged. `status` validates saved scripts and checks their relay resources
 against the currently connected USB-Relay devices. `run` requires `--name` and
 executes the saved sequence with real delays and any saved external-tool steps.
+`functions` prints every supported sequence function, control-flow operator, and
+value. Sequence names are matched case-insensitively.
+
+Sequence scripts accept either numeric selectors or configured friendly names.
+Existing numeric scripts remain valid:
+
+```
+sequence.PowerOn("6QMBS", 1);
+sequence.PowerOff("6QMBS", 2);
+```
+
+Named scripts are easier to read and identify the correct board when several
+boards have the same serial number:
+
+```
+sequence.PowerOn("DUT power", "Main relay");
+sequence.WaitChannel("DUT power", "Main relay", RelayState.On, 3000);
+sequence.ReadChannel("Fan power", "Cooling fan");
+```
 
 # shell completion
 

@@ -37,7 +37,7 @@ namespace usbrelay
                 return 1;
             }
 
-            UsbRelayWrapper control = new UsbRelayWrapper(command.Serial);
+            UsbRelayWrapper control = new UsbRelayWrapper(command.Serial, command.DevicePath, command.DeviceName);
             switch (command.Operation)
             {
                 case Operations.LIST:
@@ -47,8 +47,13 @@ namespace usbrelay
                     control.status();
                     break;
                 case Operations.ONOFF:
-                    control.on_off_channels(new HashSet<int>(command.OnChannels), new HashSet<int>(command.OffChannels));
-                    break;
+                    return control.on_off_channels(
+                        new HashSet<int>(command.OnChannels),
+                        new HashSet<int>(command.OffChannels),
+                        new HashSet<string>(command.OnChannelNames, StringComparer.OrdinalIgnoreCase),
+                        new HashSet<string>(command.OffChannelNames, StringComparer.OrdinalIgnoreCase));
+                case Operations.NAMES:
+                    return control.update_names(command.SetDeviceName, command.SetChannelNamePairs.ToArray());
             }
 
             return 0;
@@ -67,8 +72,14 @@ namespace usbrelay
             bool list = false;
             bool status = false;
             string serial = string.Empty;
+            string devicePath = string.Empty;
+            string deviceName = string.Empty;
+            string setDeviceName = null;
+            string[] setChannelNamePairs = new string[0];
             int[] onChannels = new int[0];
+            string[] onChannelNames = new string[0];
             int[] offChannels = new int[0];
+            string[] offChannelNames = new string[0];
             Operations operation = Operations.NULL;
 
             if (!hasSystemCommandLineErrors)
@@ -77,17 +88,42 @@ namespace usbrelay
                 list = parseResult.GetValue(grammar.ListOption) || parseResult.GetValue(grammar.LegacyListOption);
                 status = parseResult.GetValue(grammar.StatusOption) || parseResult.GetValue(grammar.LegacyStatusOption);
                 serial = FirstNonEmpty(parseResult.GetValue(grammar.SerialOption), parseResult.GetValue(grammar.LegacySerialOption));
+                devicePath = parseResult.GetValue(grammar.DevicePathOption) ?? string.Empty;
+                deviceName = parseResult.GetValue(grammar.DeviceNameOption) ?? string.Empty;
+                setDeviceName = parseResult.GetValue(grammar.SetDeviceNameOption);
+                setChannelNamePairs = parseResult.GetValue(grammar.SetChannelNameOption) ?? new string[0];
                 onChannels = CombineChannels(parseResult.GetValue(grammar.OnOption), parseResult.GetValue(grammar.LegacyOnOption));
+                onChannelNames = CombineNames(parseResult.GetValue(grammar.OnNameOption));
                 offChannels = CombineChannels(parseResult.GetValue(grammar.OffOption), parseResult.GetValue(grammar.LegacyOffOption));
+                offChannelNames = CombineNames(parseResult.GetValue(grammar.OffNameOption));
 
+                bool updateNames = setDeviceName != null || setChannelNamePairs.Length > 0;
                 if (list)
                     operation = Operations.LIST;
                 else if (status)
                     operation = Operations.STATUS;
-                else if (onChannels.Length > 0 || offChannels.Length > 0)
+                else if (updateNames)
+                    operation = Operations.NAMES;
+                else if (onChannels.Length > 0 || onChannelNames.Length > 0 || offChannels.Length > 0 || offChannelNames.Length > 0)
                     operation = Operations.ONOFF;
 
-                bool hasRelayOptions = list || status || !string.IsNullOrEmpty(serial) || onChannels.Length > 0 || offChannels.Length > 0;
+                bool hasRelayOptions = list || status || !string.IsNullOrEmpty(serial) || !string.IsNullOrEmpty(devicePath) || !string.IsNullOrEmpty(deviceName)
+                    || setDeviceName != null || setChannelNamePairs.Length > 0
+                    || onChannels.Length > 0 || onChannelNames.Length > 0 || offChannels.Length > 0 || offChannelNames.Length > 0;
+                int selectorCount = new[] { serial, devicePath, deviceName }.Count(value => !string.IsNullOrEmpty(value));
+                if (selectorCount > 1)
+                    errors.Add("Use only one of --serial, --device-path, or --device-name.");
+                if (updateNames && selectorCount == 0)
+                    errors.Add("Name updates require --serial, --device-path, or --device-name.");
+                if (updateNames && (list || status || onChannels.Length > 0 || onChannelNames.Length > 0 || offChannels.Length > 0 || offChannelNames.Length > 0))
+                    errors.Add("Name updates cannot be combined with list, status, or relay channel operations.");
+                if ((setChannelNamePairs.Length % 2) != 0)
+                    errors.Add("--set-channel-name requires channel/name pairs.");
+                if ((onChannels.Length > 0 || onChannelNames.Length > 0 || offChannels.Length > 0 || offChannelNames.Length > 0)
+                    && string.IsNullOrEmpty(serial)
+                    && string.IsNullOrEmpty(devicePath)
+                    && string.IsNullOrEmpty(deviceName))
+                    errors.Add("Relay channel operations require --serial, --device-path, or --device-name.");
                 if (isGui && hasRelayOptions)
                     errors.Add("--gui cannot be combined with relay operation options.");
             }
@@ -95,8 +131,14 @@ namespace usbrelay
             return new ParsedCliCommand(
                 operation,
                 serial,
+                devicePath,
+                deviceName,
+                setDeviceName,
+                setChannelNamePairs,
                 onChannels,
+                onChannelNames,
                 offChannels,
+                offChannelNames,
                 isGui,
                 isHelpRequested,
                 isVersionRequested,
@@ -137,6 +179,38 @@ namespace usbrelay
                 return sequences.Query(name, ShouldWriteInteractiveSequenceSeparator(commandName, Console.IsOutputRedirected));
             }
 
+            if (ReferenceEquals(command, grammar.SequenceReadCommand))
+            {
+                string name = parseResult.GetValue(grammar.SequenceReadNameOption);
+                return sequences.Read(name, ShouldWriteInteractiveSequenceSeparator(commandName, Console.IsOutputRedirected));
+            }
+
+            if (ReferenceEquals(command, grammar.SequenceAddCommand))
+            {
+                return sequences.Add(
+                    parseResult.GetValue(grammar.SequenceAddNameOption),
+                    parseResult.GetValue(grammar.SequenceAddScriptOption),
+                    parseResult.GetValue(grammar.SequenceAddScriptFileOption),
+                    parseResult.GetValue(grammar.SequenceAddRunButtonOption),
+                    parseResult.GetValue(grammar.SequenceAddDescriptionOption),
+                    ShouldWriteInteractiveSequenceSeparator(commandName, Console.IsOutputRedirected));
+            }
+
+            if (ReferenceEquals(command, grammar.SequenceModifyCommand))
+            {
+                return sequences.Modify(
+                    parseResult.GetValue(grammar.SequenceModifyNameOption),
+                    parseResult.GetValue(grammar.SequenceModifyNewNameOption),
+                    parseResult.GetValue(grammar.SequenceModifyScriptOption),
+                    parseResult.GetValue(grammar.SequenceModifyScriptFileOption),
+                    parseResult.GetValue(grammar.SequenceModifyRunButtonOption),
+                    parseResult.GetValue(grammar.SequenceModifyDescriptionOption),
+                    ShouldWriteInteractiveSequenceSeparator(commandName, Console.IsOutputRedirected));
+            }
+
+            if (ReferenceEquals(command, grammar.SequenceFunctionsCommand))
+                return sequences.Functions(ShouldWriteInteractiveSequenceSeparator(commandName, Console.IsOutputRedirected));
+
             if (ReferenceEquals(command, grammar.SequenceStatusCommand))
             {
                 string name = parseResult.GetValue(grammar.SequenceStatusNameOption);
@@ -149,7 +223,7 @@ namespace usbrelay
                 return sequences.Run(name, ShouldWriteInteractiveSequenceSeparator(commandName, Console.IsOutputRedirected));
             }
 
-            Console.Error.WriteLine("Usage: usbrelay sequence <query|status|run> [--name <name>]");
+            Console.Error.WriteLine("Usage: usbrelay sequence <query|read|add|modify|status|run|functions> [options]");
             return 1;
         }
 
@@ -159,8 +233,12 @@ namespace usbrelay
                 return false;
 
             return string.Equals(command, "query", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(command, "read", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(command, "add", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(command, "modify", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(command, "status", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(command, "run", StringComparison.OrdinalIgnoreCase);
+                || string.Equals(command, "run", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(command, "functions", StringComparison.OrdinalIgnoreCase);
         }
 
         private static int RunCompletion(string[] args)
@@ -187,11 +265,19 @@ namespace usbrelay
             Console.WriteLine("  usbrelay --list");
             Console.WriteLine("  usbrelay --status");
             Console.WriteLine("  usbrelay --serial BITFT --on 1");
+            Console.WriteLine("  usbrelay --device-path \"<path from --list>\" --on 1");
+            Console.WriteLine("  usbrelay --device-name \"DUT power\" --on-name \"Main relay\"");
+            Console.WriteLine("  usbrelay --device-path \"<path from --list>\" --set-device-name \"DUT power\"");
+            Console.WriteLine("  usbrelay --device-name \"DUT power\" --set-channel-name 1 \"Main relay\" 2 Debug");
             Console.WriteLine("  usbrelay --serial BITFT --on 1 2 3");
             Console.WriteLine("  usbrelay --serial BITFT --off 2");
             Console.WriteLine("  usbrelay --serial BITFT --on 1 3 5 --off 2 4 6");
             Console.WriteLine("  usbrelay --gui");
             Console.WriteLine("  usbrelay sequence query");
+            Console.WriteLine("  usbrelay sequence read --name \"Power cycle DUT\"");
+            Console.WriteLine("  usbrelay sequence add --name \"Power cycle DUT\" --script-file .\\power-cycle.sequence");
+            Console.WriteLine("  usbrelay sequence modify --name \"Power cycle DUT\" --script-file .\\power-cycle-v2.sequence");
+            Console.WriteLine("  usbrelay sequence functions");
             Console.WriteLine("  usbrelay sequence status --name \"Power cycle DUT\"");
             Console.WriteLine("  usbrelay sequence run --name \"Power cycle DUT\"");
         }
@@ -256,6 +342,15 @@ namespace usbrelay
             return channelGroups
                 .Where(channels => channels != null)
                 .SelectMany(channels => channels)
+                .ToArray();
+        }
+
+        private static string[] CombineNames(params string[][] nameGroups)
+        {
+            return nameGroups
+                .Where(names => names != null)
+                .SelectMany(names => names)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
                 .ToArray();
         }
     }

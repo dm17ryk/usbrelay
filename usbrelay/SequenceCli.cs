@@ -9,8 +9,29 @@ namespace usbrelay
 {
     public sealed class SequenceCli
     {
+        private static readonly string[] FunctionReference =
+        {
+            "Sequence functions:",
+            "  sequence.PowerOn(\"device\", channelOrName);",
+            "  sequence.PowerOff(\"device\", channelOrName);",
+            "  sequence.ReadChannel(\"device\", channelOrName);",
+            "  sequence.WaitChannel(\"device\", channelOrName, RelayState.On|Off, timeoutMs);",
+            "  sequence.Sleep(milliseconds);",
+            "  var tool = sequence.RunTool(\"tool.exe\", \"arguments\");",
+            "  sequence.Fail(\"message\");",
+            "",
+            "Operators and control constructs:",
+            "  if (tool.OutputMatches(\"regex\")) { ... } else { ... }",
+            "  var <name> = sequence.RunTool(...);",
+            "  RelayState.On and RelayState.Off",
+            "",
+            "Device and channel selectors may be serial numbers, full device paths,",
+            "friendly device names, numeric channels, or configured channel names."
+        };
+
         private readonly SequenceRepository repository;
         private readonly IRelayBackend relayBackend;
+        private readonly RelayService relayService;
         private readonly IExternalToolRunner toolRunner;
         private readonly TextWriter output;
         private readonly TextWriter error;
@@ -34,6 +55,7 @@ namespace usbrelay
         {
             this.repository = repository;
             this.relayBackend = relayBackend;
+            relayService = new RelayService(relayBackend);
             this.toolRunner = toolRunner;
             this.output = output;
             this.error = error;
@@ -82,6 +104,154 @@ namespace usbrelay
             return 0;
         }
 
+        public int Add(string name, string script, string scriptFile, string runButton, string description)
+        {
+            return Add(name, script, scriptFile, runButton, description, startOnCleanLine: false);
+        }
+
+        public int Add(string name, string script, string scriptFile, string runButton, string description, bool startOnCleanLine)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                error.WriteLine("Sequence name is required. Use --name <name>.");
+                return 1;
+            }
+
+            string resolvedScript = null;
+            if (!TryReadScript(script, scriptFile, out resolvedScript))
+                return 1;
+
+            List<SequenceDefinition> sequences;
+            if (!TryLoadSequences(out sequences))
+                return 1;
+
+            string trimmedName = name.Trim();
+            if (sequences.Any(sequence => string.Equals(sequence.Name, trimmedName, StringComparison.OrdinalIgnoreCase)))
+            {
+                error.WriteLine("Duplicate sequence name: " + trimmedName);
+                return 1;
+            }
+
+            sequences.Add(new SequenceDefinition
+            {
+                Name = trimmedName,
+                RunButtonText = runButton,
+                Description = description ?? string.Empty,
+                Script = resolvedScript
+            });
+            repository.Save(sequences);
+            output.Write(PrefixCleanLine("Added sequence: " + trimmedName + Environment.NewLine, startOnCleanLine));
+            return 0;
+        }
+
+        public int Read(string name)
+        {
+            return Read(name, startOnCleanLine: false);
+        }
+
+        public int Read(string name, bool startOnCleanLine)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                error.WriteLine("Sequence name is required. Use --name <name>.");
+                return 1;
+            }
+
+            return Query(name, startOnCleanLine);
+        }
+
+        public int Modify(string name, string newName, string script, string scriptFile, string runButton, string description)
+        {
+            return Modify(name, newName, script, scriptFile, runButton, description, startOnCleanLine: false);
+        }
+
+        public int Modify(string name, string newName, string script, string scriptFile, string runButton, string description, bool startOnCleanLine)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                error.WriteLine("Existing sequence name is required. Use --name <name>.");
+                return 1;
+            }
+
+            if (script != null && scriptFile != null)
+            {
+                error.WriteLine("Use only one of --script or --script-file.");
+                return 1;
+            }
+
+            if (newName == null && script == null && scriptFile == null && runButton == null && description == null)
+            {
+                error.WriteLine("No sequence changes were supplied.");
+                return 1;
+            }
+
+            List<SequenceDefinition> sequences;
+            if (!TryLoadSequences(out sequences))
+                return 1;
+
+            string trimmedName = name.Trim();
+            var matches = sequences
+                .Where(sequence => string.Equals(sequence.Name, trimmedName, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            if (matches.Length == 0)
+            {
+                error.WriteLine("Sequence not found: " + trimmedName);
+                return 1;
+            }
+
+            if (matches.Length > 1)
+            {
+                error.WriteLine("Duplicate sequence name: " + trimmedName);
+                return 1;
+            }
+
+            SequenceDefinition sequenceToModify = matches[0];
+            string resolvedScript = null;
+            if ((script != null || scriptFile != null) && !TryReadScript(script, scriptFile, out resolvedScript))
+                return 1;
+
+            if (newName != null)
+            {
+                if (string.IsNullOrWhiteSpace(newName))
+                {
+                    error.WriteLine("New sequence name cannot be empty.");
+                    return 1;
+                }
+
+                string trimmedNewName = newName.Trim();
+                if (sequences.Any(sequence => !ReferenceEquals(sequence, sequenceToModify)
+                    && string.Equals(sequence.Name, trimmedNewName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    error.WriteLine("Duplicate sequence name: " + trimmedNewName);
+                    return 1;
+                }
+
+                sequenceToModify.Name = trimmedNewName;
+            }
+
+            if (script != null || scriptFile != null)
+                sequenceToModify.Script = resolvedScript;
+            if (runButton != null)
+                sequenceToModify.RunButtonText = runButton;
+            if (description != null)
+                sequenceToModify.Description = description;
+
+            repository.Save(sequences);
+            output.Write(PrefixCleanLine("Updated sequence: " + Display(sequenceToModify.Name) + Environment.NewLine, startOnCleanLine));
+            return 0;
+        }
+
+        public int Functions()
+        {
+            return Functions(startOnCleanLine: false);
+        }
+
+        public int Functions(bool startOnCleanLine)
+        {
+            output.Write(PrefixCleanLine(string.Join(Environment.NewLine, FunctionReference) + Environment.NewLine, startOnCleanLine));
+            return 0;
+        }
+
         public int Status(string name)
         {
             return Status(name, startOnCleanLine: false);
@@ -102,7 +272,7 @@ namespace usbrelay
             IReadOnlyList<RelayDevice> devices;
             try
             {
-                devices = relayBackend.EnumerateDevices();
+                devices = relayService.EnumerateDevices();
             }
             catch (Exception ex)
             {
@@ -168,7 +338,7 @@ namespace usbrelay
             output.Write(PrefixCleanLine(Display(sequence.Name) + " started" + Environment.NewLine, startOnCleanLine));
             SequenceRunResult result = SequenceRunner.Run(
                 parsed,
-                new RelaySequenceBackend(relayBackend),
+                new RelaySequenceBackend(relayService),
                 toolRunner,
                 skipDelays: false);
 
@@ -222,6 +392,53 @@ namespace usbrelay
 
             selected = matches;
             return true;
+        }
+
+        private bool TryLoadSequences(out List<SequenceDefinition> sequences)
+        {
+            try
+            {
+                sequences = repository.Load().ToList();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                sequences = new List<SequenceDefinition>();
+                WriteException("Failed to load sequences from repository.", ex);
+                return false;
+            }
+        }
+
+        private bool TryReadScript(string script, string scriptFile, out string resolvedScript)
+        {
+            resolvedScript = script;
+            if (script != null && scriptFile != null)
+            {
+                error.WriteLine("Use only one of --script or --script-file.");
+                return false;
+            }
+
+            if (scriptFile == null)
+            {
+                if (script == null)
+                {
+                    error.WriteLine("A sequence script is required. Use --script or --script-file.");
+                    return false;
+                }
+
+                return true;
+            }
+
+            try
+            {
+                resolvedScript = File.ReadAllText(scriptFile);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                WriteException("Failed to read sequence script file.", ex);
+                return false;
+            }
         }
 
         private void WriteException(string message, Exception ex)
@@ -290,16 +507,31 @@ namespace usbrelay
 
         private static bool HasResource(IEnumerable<RelayDevice> devices, RelayResource resource)
         {
-            return devices.Any(device =>
-                string.Equals(device.SerialNumber, resource.SerialNumber, StringComparison.OrdinalIgnoreCase) &&
-                resource.Channel >= 1 &&
-                resource.Channel <= device.ChannelCount);
+            var matches = devices
+                .Where(device => device.MatchesSelector(resource.SerialNumber))
+                .ToArray();
+            if (matches.Length != 1)
+                return false;
+
+            int channel;
+            try
+            {
+                channel = string.IsNullOrEmpty(resource.ChannelName)
+                    ? resource.Channel
+                    : matches[0].ResolveChannel(resource.ChannelName);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+
+            return channel >= 1 && channel <= matches[0].ChannelCount;
         }
 
         private static string FormatResources(IEnumerable<RelayResource> resources)
         {
             var values = resources
-                .Select(resource => resource.SerialNumber + ":CH" + resource.Channel)
+                .Select(resource => resource.SerialNumber + ":" + (string.IsNullOrEmpty(resource.ChannelName) ? "CH" + resource.Channel : resource.ChannelName))
                 .OrderBy(value => value)
                 .ToArray();
             return values.Length == 0 ? "-" : string.Join(", ", values);

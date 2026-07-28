@@ -21,25 +21,41 @@ namespace usbrelay.Sequences
 
     public sealed class SequenceExecutionContext
     {
-        public SequenceExecutionContext(ISequenceRelayBackend relay, IExternalToolRunner toolRunner, bool skipDelays)
+        public SequenceExecutionContext(ISequenceRelayBackend relay, IExternalToolRunner toolRunner, bool skipDelays, Action actionCompleted)
         {
             Relay = relay;
             ToolRunner = toolRunner;
             SkipDelays = skipDelays;
+            ActionCompleted = actionCompleted;
             Log = new List<string>();
         }
 
         public ISequenceRelayBackend Relay { get; }
         public IExternalToolRunner ToolRunner { get; }
         public bool SkipDelays { get; }
+        public Action ActionCompleted { get; }
         public List<string> Log { get; }
         public ExternalToolResult LastToolResult { get; set; }
+
+        public void NotifyActionCompleted()
+        {
+            if (ActionCompleted != null)
+                ActionCompleted();
+        }
     }
 
     public interface ISequenceRelayBackend
     {
         void SetChannel(string serialNumber, int channel, bool on);
+        void SetChannel(string deviceSelector, string channelName, bool on);
         bool GetChannelState(string serialNumber, int channel);
+        bool GetChannelState(string deviceSelector, string channelName);
+    }
+
+    public interface ISequenceRelayDisplay
+    {
+        string DescribeChannel(string deviceSelector, int channel);
+        string DescribeChannel(string deviceSelector, string channelName);
     }
 
     public interface IExternalToolRunner
@@ -61,9 +77,14 @@ namespace usbrelay.Sequences
 
     public static class SequenceRunner
     {
-        public static SequenceRunResult Run(SequenceParseResult sequence, ISequenceRelayBackend relay, IExternalToolRunner toolRunner, bool skipDelays = true)
+        public static SequenceRunResult Run(
+            SequenceParseResult sequence,
+            ISequenceRelayBackend relay,
+            IExternalToolRunner toolRunner,
+            bool skipDelays = true,
+            Action actionCompleted = null)
         {
-            var context = new SequenceExecutionContext(relay, toolRunner, skipDelays);
+            var context = new SequenceExecutionContext(relay, toolRunner, skipDelays, actionCompleted);
 
             if (!sequence.IsValid)
                 return new SequenceRunResult(false, sequence.Diagnostics, new InvalidOperationException("Sequence is invalid."));
@@ -71,7 +92,10 @@ namespace usbrelay.Sequences
             try
             {
                 foreach (var action in sequence.Actions)
+                {
                     action.Execute(context);
+                    context.NotifyActionCompleted();
+                }
 
                 return new SequenceRunResult(true, context.Log, null);
             }
