@@ -92,7 +92,7 @@ namespace usbrelay
             {
                 yield return new SequenceCompletionItem(
                     "if (" + variable + ".OutputMatches(\"READY|OK\")) {" + Environment.NewLine +
-                    "    sequence.PowerOn(\"" + EscapeString(branchTarget.SerialNumber) + "\", " + branchTarget.Channel + ");" + Environment.NewLine +
+                    "    sequence.PowerOn(\"" + EscapeString(branchTarget.DeviceSelector) + "\", " + branchTarget.ChannelExpression + ");" + Environment.NewLine +
                     "} else {" + Environment.NewLine +
                     "    sequence.Fail(\"Tool output did not match\");" + Environment.NewLine +
                     "}",
@@ -107,12 +107,12 @@ namespace usbrelay
 
             foreach (RelayTarget target in GetRelayTargets(devices))
             {
-                string channel = "\"" + EscapeString(target.SerialNumber) + "\", " + target.Channel;
-                yield return new SequenceCompletionItem(prefix + "PowerOn(" + channel + ")" + suffix, "Turn " + target.SerialNumber + " CH" + target.Channel + " on");
-                yield return new SequenceCompletionItem(prefix + "PowerOff(" + channel + ")" + suffix, "Turn " + target.SerialNumber + " CH" + target.Channel + " off");
-                yield return new SequenceCompletionItem(prefix + "ReadChannel(" + channel + ")" + suffix, "Read " + target.SerialNumber + " CH" + target.Channel + " status");
-                yield return new SequenceCompletionItem(prefix + "WaitChannel(" + channel + ", RelayState.On, 3000)" + suffix, "Wait for " + target.SerialNumber + " CH" + target.Channel + " to turn on");
-                yield return new SequenceCompletionItem(prefix + "WaitChannel(" + channel + ", RelayState.Off, 3000)" + suffix, "Wait for " + target.SerialNumber + " CH" + target.Channel + " to turn off");
+                string channel = "\"" + EscapeString(target.DeviceSelector) + "\", " + target.ChannelExpression;
+                yield return new SequenceCompletionItem(prefix + "PowerOn(" + channel + ")" + suffix, "Turn " + target.DisplayName + " on");
+                yield return new SequenceCompletionItem(prefix + "PowerOff(" + channel + ")" + suffix, "Turn " + target.DisplayName + " off");
+                yield return new SequenceCompletionItem(prefix + "ReadChannel(" + channel + ")" + suffix, "Read " + target.DisplayName + " status");
+                yield return new SequenceCompletionItem(prefix + "WaitChannel(" + channel + ", RelayState.On, 3000)" + suffix, "Wait for " + target.DisplayName + " to turn on");
+                yield return new SequenceCompletionItem(prefix + "WaitChannel(" + channel + ", RelayState.Off, 3000)" + suffix, "Wait for " + target.DisplayName + " to turn off");
             }
 
             yield return new SequenceCompletionItem(prefix + "Sleep(500)" + suffix, "Pause sequence execution");
@@ -149,12 +149,16 @@ namespace usbrelay
                         continue;
 
                     for (int channel = 1; channel <= device.ChannelCount; channel++)
-                        targets.Add(new RelayTarget(device.SerialNumber, channel));
+                    {
+                        string deviceSelector = string.IsNullOrEmpty(device.DeviceName) ? device.SerialNumber : device.DeviceName;
+                        string channelName = device.ChannelNames.ContainsKey(channel) ? device.GetChannelName(channel) : null;
+                        targets.Add(new RelayTarget(deviceSelector, channel, channelName, device.GetChannelName(channel)));
+                    }
                 }
             }
 
             if (targets.Count == 0)
-                targets.Add(new RelayTarget(DefaultSerial, 1));
+                targets.Add(new RelayTarget(DefaultSerial, 1, null, "CH1"));
 
             return targets;
         }
@@ -201,14 +205,27 @@ namespace usbrelay
 
         private sealed class RelayTarget
         {
-            public RelayTarget(string serialNumber, int channel)
+            public RelayTarget(string deviceSelector, int channel, string channelName, string displayChannelName)
             {
-                SerialNumber = serialNumber;
+                DeviceSelector = deviceSelector;
                 Channel = channel;
+                ChannelName = channelName;
+                DisplayName = deviceSelector + " " + displayChannelName;
             }
 
-            public string SerialNumber { get; }
+            public string DeviceSelector { get; }
             public int Channel { get; }
+            public string ChannelName { get; }
+            public string DisplayName { get; }
+            public string ChannelExpression
+            {
+                get
+                {
+                    return string.IsNullOrEmpty(ChannelName)
+                        ? Channel.ToString()
+                        : "\"" + EscapeString(ChannelName) + "\"";
+                }
+            }
         }
 
         private struct MemberAccess

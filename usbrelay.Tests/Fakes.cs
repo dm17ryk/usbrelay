@@ -16,7 +16,7 @@ namespace usbrelay.Tests
             foreach (var device in devices)
             {
                 for (int channel = 1; channel <= device.ChannelCount; channel++)
-                    states[new RelayResource(device.SerialNumber, channel)] = device.IsChannelOn(channel);
+                    states[new RelayResource(device.SerialNumber, channel, device.DevicePath)] = device.IsChannelOn(channel);
             }
         }
 
@@ -38,10 +38,29 @@ namespace usbrelay.Tests
             states[new RelayResource(serialNumber, channel)] = on;
         }
 
+        public void SetChannel(RelayDevice device, int channel, bool on)
+        {
+            states[new RelayResource(device.SerialNumber, channel, device.DevicePath)] = on;
+        }
+
+        public void SetChannel(string deviceSelector, string channelName, bool on)
+        {
+            RelayDevice device = GetDevice(deviceSelector);
+            SetChannel(device, device.ResolveChannel(channelName), on);
+        }
+
         public bool GetChannelState(string serialNumber, int channel)
         {
-            bool value;
-            return states.TryGetValue(new RelayResource(serialNumber, channel), out value) && value;
+            return states.Any(pair =>
+                string.Equals(pair.Key.SerialNumber, serialNumber, StringComparison.OrdinalIgnoreCase)
+                && pair.Key.Channel == channel
+                && pair.Value);
+        }
+
+        public bool GetChannelState(string deviceSelector, string channelName)
+        {
+            RelayDevice device = GetDevice(deviceSelector);
+            return GetChannelState(device.SerialNumber, device.ResolveChannel(channelName));
         }
 
         private RelayDevice CloneWithState(RelayDevice device)
@@ -49,11 +68,19 @@ namespace usbrelay.Tests
             int mask = 0;
             for (int channel = 1; channel <= device.ChannelCount; channel++)
             {
-                if (GetChannelState(device.SerialNumber, channel))
+                bool isOn;
+                if (states.TryGetValue(new RelayResource(device.SerialNumber, channel, device.DevicePath), out isOn) && isOn)
                     mask |= 1 << (channel - 1);
             }
 
-            return new RelayDevice(device.SerialNumber, device.Type, device.ChannelCount, mask);
+            return new RelayDevice(
+                device.SerialNumber,
+                device.Type,
+                device.ChannelCount,
+                mask,
+                device.DevicePath,
+                device.DeviceName,
+                device.ChannelNames.ToDictionary(pair => pair.Key, pair => pair.Value));
         }
     }
 

@@ -8,10 +8,10 @@ namespace usbrelay.Sequences
 {
     public static class SequenceParser
     {
-        private static readonly Regex PowerRegex = new Regex(@"^sequence\.Power(?<state>On|Off)\(""(?<serial>[^""]+)""\s*,\s*(?<channel>\d+)\);?$", RegexOptions.Compiled);
+        private static readonly Regex PowerRegex = new Regex(@"^sequence\.Power(?<state>On|Off)\(""(?<serial>[^""]+)""\s*,\s*(?<channel>[^,)]+)\);?$", RegexOptions.Compiled);
         private static readonly Regex SleepRegex = new Regex(@"^sequence\.Sleep\((?<ms>\d+)\);?$", RegexOptions.Compiled);
-        private static readonly Regex ReadRegex = new Regex(@"^sequence\.ReadChannel\(""(?<serial>[^""]+)""\s*,\s*(?<channel>\d+)\);?$", RegexOptions.Compiled);
-        private static readonly Regex WaitRegex = new Regex(@"^sequence\.WaitChannel\(""(?<serial>[^""]+)""\s*,\s*(?<channel>\d+)\s*,\s*RelayState\.(?<state>On|Off)\s*,\s*(?<timeout>\d+)\);?$", RegexOptions.Compiled);
+        private static readonly Regex ReadRegex = new Regex(@"^sequence\.ReadChannel\(""(?<serial>[^""]+)""\s*,\s*(?<channel>[^,)]+)\);?$", RegexOptions.Compiled);
+        private static readonly Regex WaitRegex = new Regex(@"^sequence\.WaitChannel\(""(?<serial>[^""]+)""\s*,\s*(?<channel>[^,)]+)\s*,\s*RelayState\.(?<state>On|Off)\s*,\s*(?<timeout>\d+)\);?$", RegexOptions.Compiled);
         private static readonly Regex RunToolRegex = new Regex(@"^(var\s+\w+\s*=\s*)?sequence\.RunTool\(""(?<path>[^""]+)""\s*,\s*""(?<args>[^""]*)""\);?$", RegexOptions.Compiled);
         private static readonly Regex IfRegex = new Regex(@"^if\s*\(\s*\w+\.OutputMatches\(""(?<pattern>[^""]+)""\)\s*\)\s*\{?$", RegexOptions.Compiled);
         private static readonly Regex FailRegex = new Regex(@"^sequence\.Fail\(""(?<message>[^""]*)""\);?$", RegexOptions.Compiled);
@@ -62,7 +62,7 @@ namespace usbrelay.Sequences
                 Match match = PowerRegex.Match(line);
                 if (match.Success)
                 {
-                    actions.Add(new RelayAction(match.Groups["serial"].Value, Int(match, "channel"), match.Groups["state"].Value == "On"));
+                    actions.Add(CreateRelayAction(match));
                     index++;
                     continue;
                 }
@@ -79,7 +79,7 @@ namespace usbrelay.Sequences
                 if (match.Success)
                 {
                     RelayState state = (RelayState)Enum.Parse(typeof(RelayState), match.Groups["state"].Value);
-                    actions.Add(new WaitChannelAction(match.Groups["serial"].Value, Int(match, "channel"), state, Int(match, "timeout")));
+                    actions.Add(CreateWaitChannelAction(match, state));
                     index++;
                     continue;
                 }
@@ -87,7 +87,7 @@ namespace usbrelay.Sequences
                 match = ReadRegex.Match(line);
                 if (match.Success)
                 {
-                    actions.Add(new ReadChannelAction(match.Groups["serial"].Value, Int(match, "channel")));
+                    actions.Add(CreateReadChannelAction(match));
                     index++;
                     continue;
                 }
@@ -160,7 +160,37 @@ namespace usbrelay.Sequences
 
         private static int Int(Match match, string groupName)
         {
-            return Convert.ToInt32(match.Groups[groupName].Value);
+            return Convert.ToInt32(match.Groups[groupName].Value.Trim().Trim('"'));
+        }
+
+        private static RelayAction CreateRelayAction(Match match)
+        {
+            string channelName = NamedChannel(match);
+            return string.IsNullOrEmpty(channelName)
+                ? new RelayAction(match.Groups["serial"].Value, Int(match, "channel"), match.Groups["state"].Value == "On")
+                : new RelayAction(match.Groups["serial"].Value, channelName, match.Groups["state"].Value == "On");
+        }
+
+        private static WaitChannelAction CreateWaitChannelAction(Match match, RelayState state)
+        {
+            string channelName = NamedChannel(match);
+            return string.IsNullOrEmpty(channelName)
+                ? new WaitChannelAction(match.Groups["serial"].Value, Int(match, "channel"), state, Int(match, "timeout"))
+                : new WaitChannelAction(match.Groups["serial"].Value, channelName, state, Int(match, "timeout"));
+        }
+
+        private static ReadChannelAction CreateReadChannelAction(Match match)
+        {
+            string channelName = NamedChannel(match);
+            return string.IsNullOrEmpty(channelName)
+                ? new ReadChannelAction(match.Groups["serial"].Value, Int(match, "channel"))
+                : new ReadChannelAction(match.Groups["serial"].Value, channelName);
+        }
+
+        private static string NamedChannel(Match match)
+        {
+            string value = match.Groups["channel"].Value.Trim();
+            return value.StartsWith("\"") ? value.Trim('"') : null;
         }
     }
 }

@@ -10,8 +10,8 @@ namespace usbrelay
 {
     public sealed class MainForm : Form
     {
-        private readonly IRelayBackend relayBackend;
         private readonly RelayService relayService;
+        private readonly RelayNamingRepository relayNamingRepository;
         private readonly SequenceRepository sequenceRepository;
         private readonly string layoutSettingsPath;
         private readonly Func<SequenceDefinition, bool> removeSequenceConfirmation;
@@ -26,7 +26,7 @@ namespace usbrelay
         private TableLayoutPanel sequencePaneLayout;
         private TableLayoutPanel devicePaneLayout;
         private TextBox logTextBox;
-        private TextBox statusTextBox;
+        private DataGridView statusGrid;
         private SequenceDefinition selectedSequence;
         private bool loaded;
         private bool defaultSplitterApplied;
@@ -52,8 +52,8 @@ namespace usbrelay
             string layoutSettingsPath,
             Func<SequenceDefinition, bool> removeSequenceConfirmation)
         {
-            this.relayBackend = relayBackend;
-            this.relayService = new RelayService(relayBackend);
+            this.relayNamingRepository = new RelayNamingRepository(RelayNamingRepository.DefaultPath);
+            this.relayService = new RelayService(relayBackend, relayNamingRepository);
             this.sequenceRepository = sequenceRepository;
             this.layoutSettingsPath = layoutSettingsPath;
             this.removeSequenceConfirmation = removeSequenceConfirmation ?? ConfirmRemoveSequence;
@@ -82,6 +82,7 @@ namespace usbrelay
             base.OnShown(e);
             ApplyDefaultSplitterDistance();
             ResizeDeviceRows();
+            UpdateBusyState();
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
@@ -143,14 +144,14 @@ namespace usbrelay
                 AutoGenerateColumns = false,
                 ColumnHeadersVisible = false,
                 MultiSelect = false,
-                ReadOnly = true,
+                ReadOnly = false,
                 RowHeadersVisible = false,
                 SelectionMode = DataGridViewSelectionMode.FullRowSelect,
                 ScrollBars = ScrollBars.Vertical,
                 BackgroundColor = SystemColors.Window,
                 BorderStyle = BorderStyle.FixedSingle
             };
-            sequenceGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "NameColumn", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
+            sequenceGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "NameColumn", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, ReadOnly = true });
             sequenceGrid.Columns.Add(new DataGridViewButtonColumn { Name = "RunColumn", Width = 86, UseColumnTextForButtonValue = false });
             sequenceGrid.CellClick += SequenceGrid_CellClick;
             sequenceGrid.SelectionChanged += (s, e) => SelectGridSequence();
@@ -189,6 +190,7 @@ namespace usbrelay
 
             var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
             toolbar.Controls.Add(MiniButton("Refresh", (s, e) => RefreshDevices()));
+            toolbar.Controls.Add(MiniButton("Edit names", (s, e) => EditDeviceNames()));
             toolbar.Controls.Add(MiniButton("All Off", (s, e) => AllOff()));
             toolbar.Controls.Add(new Label { Text = "Discovered on load, refreshable", AutoSize = true, Padding = new Padding(6, 6, 0, 0) });
             devicePaneLayout.Controls.Add(toolbar, 0, 0);
@@ -204,15 +206,60 @@ namespace usbrelay
             devicePaneLayout.Controls.Add(devicesPanel, 0, 1);
 
             devicePaneLayout.Controls.Add(new Label { Text = "Device and channel status", AutoSize = true, Margin = new Padding(0, 8, 0, 4) }, 0, 2);
-            statusTextBox = new TextBox
+            statusGrid = new DataGridView
             {
                 Dock = DockStyle.Fill,
-                Multiline = true,
                 ReadOnly = true,
-                ScrollBars = ScrollBars.Vertical,
-                Font = new Font("Consolas", 9F)
+                AllowUserToAddRows = false,
+                AllowUserToDeleteRows = false,
+                AllowUserToResizeRows = false,
+                AutoGenerateColumns = false,
+                AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells,
+                BackgroundColor = SystemColors.Window,
+                BorderStyle = BorderStyle.FixedSingle,
+                ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize,
+                MultiSelect = false,
+                RowHeadersVisible = false,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                ScrollBars = ScrollBars.Both
             };
-            devicePaneLayout.Controls.Add(statusTextBox, 0, 3);
+            statusGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "StatusName", HeaderText = "Name", Width = 110 });
+            statusGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "StatusSerial", HeaderText = "Serial", Width = 82 });
+            statusGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "StatusType", HeaderText = "Type", Width = 105 });
+            statusGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "StatusPath", HeaderText = "Device Path", Width = 330, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
+            for (int channel = 1; channel <= 8; channel++)
+            {
+                var column = new DataGridViewTextBoxColumn
+                {
+                    Name = "StatusChannel" + channel,
+                    HeaderText = "CH" + channel,
+                    Width = 78,
+                    DefaultCellStyle = new DataGridViewCellStyle
+                    {
+                        Alignment = DataGridViewContentAlignment.MiddleCenter,
+                        WrapMode = DataGridViewTriState.True
+                    }
+                };
+                statusGrid.Columns.Add(column);
+            }
+            statusGrid.CellFormatting += (s, e) =>
+            {
+                if (e.RowIndex < 0 || e.ColumnIndex < 4 || !(e.Value is string))
+                    return;
+
+                string value = (string)e.Value;
+                if (value.EndsWith("ON", StringComparison.Ordinal))
+                {
+                    e.CellStyle.ForeColor = Color.DarkGreen;
+                    e.CellStyle.BackColor = Color.Honeydew;
+                }
+                else if (value.EndsWith("OFF", StringComparison.Ordinal))
+                {
+                    e.CellStyle.ForeColor = Color.DimGray;
+                    e.CellStyle.BackColor = Color.WhiteSmoke;
+                }
+            };
+            devicePaneLayout.Controls.Add(statusGrid, 0, 3);
 
             return devicePaneLayout;
         }
@@ -292,7 +339,13 @@ namespace usbrelay
 
             selectedSequence = sequence;
             if (sequenceGrid.Columns[e.ColumnIndex].Name == "RunColumn")
+            {
+                var parsed = sequenceParseCache.Get(sequence);
+                if (!parsed.IsValid || parsed.Resources.Any(resource => resourceLocks.IsBusy(resource)))
+                    return;
+
                 RunSequence(sequence);
+            }
         }
 
         private void SequenceGrid_CellToolTipTextNeeded(object sender, DataGridViewCellToolTipTextNeededEventArgs e)
@@ -375,7 +428,8 @@ namespace usbrelay
             }
 
             string owner = Guid.NewGuid().ToString("N");
-            if (!resourceLocks.TryReserve(owner, parsed.Resources))
+            RelayResource[] resources = ResolveResources(parsed.Resources).ToArray();
+            if (!resourceLocks.TryReserve(owner, resources))
             {
                 AppendLog(sequence.Name + " waiting: required channel is busy");
                 return;
@@ -383,11 +437,16 @@ namespace usbrelay
 
             UpdateBusyState();
             AppendLog(sequence.Name + " started");
-            AppendLog("reserved " + string.Join(", ", parsed.Resources.Select(resource => resource.ToString())));
+            AppendLog("reserved " + string.Join(", ", resources.Select(DescribeResource)));
 
             try
             {
-                var result = await Task.Run(() => SequenceRunner.Run(parsed, new RelaySequenceBackend(relayBackend), new ProcessExternalToolRunner(), skipDelays: false));
+                var result = await Task.Run(() => SequenceRunner.Run(
+                    parsed,
+                    new RelaySequenceBackend(relayService),
+                    new ProcessExternalToolRunner(),
+                    skipDelays: false,
+                    actionCompleted: RefreshDeviceStatusFromSequence));
                 foreach (string line in result.Log)
                     AppendLog(line);
                 AppendLog(sequence.Name + (result.Success ? " finished" : " failed"));
@@ -416,31 +475,94 @@ namespace usbrelay
             }
 
             devicesPanel.Controls.Clear();
-            statusTextBox.Clear();
+            statusGrid.Rows.Clear();
 
             foreach (var device in devices)
             {
                 devicesPanel.Controls.Add(CreateDevicePanel(device));
-                statusTextBox.AppendText(device.SerialNumber + ": connected, " + device.ChannelCount + " channels, last read " + DateTime.Now.ToString("HH:mm:ss") + Environment.NewLine);
-                for (int channel = 1; channel <= device.ChannelCount; channel++)
-                    statusTextBox.AppendText("  CH" + channel + " " + (device.IsChannelOn(channel) ? "ON " : "OFF"));
-                statusTextBox.AppendText(Environment.NewLine);
+                int rowIndex = statusGrid.Rows.Add(new object[12]);
+                UpdateStatusRow(statusGrid.Rows[rowIndex], device);
             }
 
             if (devices.Count == 0)
-                statusTextBox.Text = "No USB relay devices discovered.";
+            {
+                int rowIndex = statusGrid.Rows.Add("No USB relay devices discovered.");
+                statusGrid.Rows[rowIndex].Cells[0].ToolTipText = "Connect a USB relay device and click Refresh.";
+            }
 
             ResizeDeviceRows();
+            UpdateBusyState();
+        }
+
+        private void RefreshDeviceStatusTable()
+        {
+            IReadOnlyList<RelayDevice> devices;
+            try
+            {
+                devices = relayService.EnumerateDevices();
+                currentDevices = devices.ToArray();
+            }
+            catch (Exception ex)
+            {
+                AppendLog("Status refresh failed: " + ex.Message);
+                return;
+            }
+
+            if (devices.Count == 0)
+            {
+                if (statusGrid.Rows.Count != 1)
+                    RefreshDevices();
+                return;
+            }
+
+            if (statusGrid.Rows.Count != devices.Count)
+            {
+                RefreshDevices();
+                return;
+            }
+
+            for (int index = 0; index < devices.Count; index++)
+                UpdateStatusRow(statusGrid.Rows[index], devices[index]);
+
+            UpdateBusyState();
+        }
+
+        private void RefreshDeviceStatusFromSequence()
+        {
+            if (IsDisposed || Disposing || !IsHandleCreated)
+                return;
+
+            try
+            {
+                BeginInvoke(new Action(RefreshDeviceStatusTable));
+            }
+            catch (InvalidOperationException)
+            {
+                // The form can close while a sequence worker reports its last action.
+            }
+        }
+
+        private void UpdateStatusRow(DataGridViewRow statusRow, RelayDevice device)
+        {
+            statusRow.Cells[0].Value = device.DisplayName;
+            statusRow.Cells[1].Value = device.SerialNumber;
+            statusRow.Cells[2].Value = device.Type;
+            statusRow.Cells[3].Value = device.DevicePath;
+            statusRow.Cells[3].ToolTipText = device.DevicePath;
+            for (int channel = 1; channel <= device.ChannelCount; channel++)
+                statusRow.Cells[channel + 3].Value = device.GetChannelName(channel) + Environment.NewLine + (device.IsChannelOn(channel) ? "ON" : "OFF");
+            statusRow.Height = 38;
         }
 
         private Control CreateDevicePanel(RelayDevice device)
         {
             var group = new GroupBox
             {
-                Text = device.SerialNumber + " - " + device.Type + " - connected",
+                Text = device.DisplayName + " (" + device.SerialNumber + ") - " + device.Type + " - connected",
                 Width = DeviceRowWidth(),
                 Margin = new Padding(0, 2, 0, 6),
-                Tag = device.ChannelCount
+                Tag = device.ChannelCount,
+                AccessibleName = "USB relay " + device.SerialNumber + "; device path " + device.DevicePath
             };
 
             var channels = new FlowLayoutPanel
@@ -456,14 +578,14 @@ namespace usbrelay
                 bool on = device.IsChannelOn(channel);
                 var button = new Button
                 {
-                    Text = "● CH" + channel + Environment.NewLine + (on ? "ON" : "OFF"),
+                    Text = "● " + device.GetChannelName(channel) + Environment.NewLine + (on ? "ON" : "OFF"),
                     ForeColor = on ? Color.DarkGreen : Color.Firebrick,
                     Width = 64,
                     Height = 42,
                     Margin = new Padding(2),
-                    Tag = new RelayResource(device.SerialNumber, channel)
+                    Tag = new RelayResource(device.SerialNumber, channel, device.DevicePath)
                 };
-                button.Click += (s, e) => ToggleChannel(device.SerialNumber, capturedChannel, !on);
+                button.Click += (s, e) => ToggleChannel(device, capturedChannel, !on);
                 channels.Controls.Add(button);
             }
 
@@ -498,22 +620,78 @@ namespace usbrelay
             return Math.Max(260, devicesPanel.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 4);
         }
 
-        private void ToggleChannel(string serialNumber, int channel, bool on, bool refreshDevices = true)
+        private void ToggleChannel(RelayDevice device, int channel, bool on, bool refreshDevices = true)
         {
-            var resource = new RelayResource(serialNumber, channel);
+            var resource = new RelayResource(device.SerialNumber, channel, device.DevicePath);
             if (resourceLocks.IsBusy(resource))
+            {
+                System.Diagnostics.Trace.WriteLine(
+                    "[MainForm] ToggleChannel: skipped busy device serial=" + device.SerialNumber
+                    + ", path=" + device.DevicePath
+                    + ", channel=" + channel);
                 return;
+            }
 
             try
             {
-                relayBackend.SetChannel(serialNumber, channel, on);
-                AppendLog(serialNumber + " CH" + channel + " -> " + (on ? "ON" : "OFF") + " ok");
+                System.Diagnostics.Trace.WriteLine(
+                    "[MainForm] ToggleChannel: routing device serial=" + device.SerialNumber
+                    + ", path=" + device.DevicePath
+                    + ", channel=" + channel
+                    + ", on=" + on);
+                relayService.SetChannel(device, channel, on);
+                AppendLog(DescribeChannel(device, channel) + " -> " + (on ? "ON" : "OFF") + " ok");
                 if (refreshDevices)
                     RefreshDevices();
             }
             catch (Exception ex)
             {
-                AppendLog(serialNumber + " CH" + channel + " failed: " + ex.Message);
+                System.Diagnostics.Trace.WriteLine(
+                    "[MainForm] ToggleChannel: failed device serial=" + device.SerialNumber
+                    + ", path=" + device.DevicePath
+                    + ", channel=" + channel
+                    + ", error=" + ex);
+                AppendLog(DescribeChannel(device, channel) + " failed: " + ex.Message);
+            }
+        }
+
+        private IEnumerable<RelayResource> ResolveResources(IEnumerable<RelayResource> resources)
+        {
+            var resolved = new List<RelayResource>();
+            foreach (RelayResource resource in resources)
+            {
+                RelayDevice device = currentDevices.FirstOrDefault(item => item.MatchesSelector(resource.SerialNumber));
+                if (device == null)
+                {
+                    resolved.Add(resource);
+                    continue;
+                }
+
+                int channel;
+                try
+                {
+                    channel = string.IsNullOrEmpty(resource.ChannelName)
+                        ? resource.Channel
+                        : device.ResolveChannel(resource.ChannelName);
+                }
+                catch (Exception)
+                {
+                    resolved.Add(resource);
+                    continue;
+                }
+
+                resolved.Add(new RelayResource(device.SerialNumber, channel, device.DevicePath));
+            }
+
+            return resolved;
+        }
+
+        private void EditDeviceNames()
+        {
+            using (var form = new DeviceNamingForm(currentDevices, relayNamingRepository))
+            {
+                if (form.ShowDialog(this) == DialogResult.OK)
+                    RefreshDevices();
             }
         }
 
@@ -522,7 +700,7 @@ namespace usbrelay
             foreach (var device in relayService.EnumerateDevices())
             {
                 for (int channel = 1; channel <= device.ChannelCount; channel++)
-                    ToggleChannel(device.SerialNumber, channel, false, refreshDevices: false);
+                    ToggleChannel(device, channel, false, refreshDevices: false);
             }
 
             RefreshDevices();
@@ -537,9 +715,12 @@ namespace usbrelay
                     continue;
 
                 var parsed = sequenceParseCache.Get(sequence);
-                bool busy = parsed.Resources.Any(resource => resourceLocks.IsBusy(resource));
-                row.Cells["RunColumn"].Value = !parsed.IsValid ? "Invalid" : busy ? "Busy" : sequence.DisplayRunButtonText;
-                row.Cells["RunColumn"].Style.ForeColor = !parsed.IsValid || busy ? SystemColors.GrayText : SystemColors.ControlText;
+                bool busy = ResolveResources(parsed.Resources).Any(resource => resourceLocks.IsBusy(resource));
+                var runCell = row.Cells["RunColumn"];
+                runCell.Value = !parsed.IsValid ? "Invalid" : busy ? "Busy" : sequence.DisplayRunButtonText;
+                runCell.ReadOnly = !parsed.IsValid || busy;
+                runCell.Style.ForeColor = !parsed.IsValid || busy ? SystemColors.GrayText : SystemColors.ControlText;
+                runCell.Style.BackColor = !parsed.IsValid || busy ? SystemColors.Control : SystemColors.Window;
             }
 
             foreach (Control group in devicesPanel.Controls)
@@ -637,6 +818,30 @@ namespace usbrelay
             }
 
             logTextBox.AppendText(DateTime.Now.ToString("HH:mm:ss") + " " + message + Environment.NewLine);
+        }
+
+        private string DescribeResource(RelayResource resource)
+        {
+            RelayDevice device = currentDevices.FirstOrDefault(item => item.MatchesSelector(resource.SerialNumber));
+            if (device == null)
+                return resource.ToString();
+
+            try
+            {
+                int channel = string.IsNullOrEmpty(resource.ChannelName)
+                    ? resource.Channel
+                    : device.ResolveChannel(resource.ChannelName);
+                return DescribeChannel(device, channel);
+            }
+            catch (Exception)
+            {
+                return resource.ToString();
+            }
+        }
+
+        private static string DescribeChannel(RelayDevice device, int channel)
+        {
+            return device.DisplayName + " " + device.GetChannelName(channel) + " (CH" + channel + ")";
         }
     }
 }
