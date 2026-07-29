@@ -24,10 +24,7 @@ namespace usbrelay.Sequences
         public IReadOnlyList<string> Log { get; }
         public Exception Error { get; }
         public bool Exited { get; }
-    }
-
-    internal sealed class SequenceExitException : Exception
-    {
+        public string StatusText => Exited ? "stopped" : Success ? "finished" : "failed";
     }
 
     public sealed class SequenceExecutionContext
@@ -56,6 +53,7 @@ namespace usbrelay.Sequences
         public Func<string, string, bool> Confirmation { get; }
         public List<string> Log { get; }
         public ExternalToolResult LastToolResult { get; set; }
+        public bool ExitRequested { get; private set; }
 
         public void SetBooleanVariable(string name, bool value)
         {
@@ -87,7 +85,7 @@ namespace usbrelay.Sequences
         public void Exit(string message)
         {
             Log.Add("EXIT: " + (message ?? string.Empty));
-            throw new SequenceExitException();
+            ExitRequested = true;
         }
 
         public void NotifyActionCompleted()
@@ -148,14 +146,13 @@ namespace usbrelay.Sequences
                 foreach (var action in sequence.Actions)
                 {
                     action.Execute(context);
+                    if (context.ExitRequested)
+                        return new SequenceRunResult(true, context.Log, null, exited: true);
+
                     context.NotifyActionCompleted();
                 }
 
                 return new SequenceRunResult(true, context.Log, null);
-            }
-            catch (SequenceExitException)
-            {
-                return new SequenceRunResult(true, context.Log, null, exited: true);
             }
             catch (Exception ex)
             {

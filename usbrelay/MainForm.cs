@@ -462,14 +462,17 @@ namespace usbrelay
                     confirmation: sequenceConfirmation));
                 foreach (string line in result.Log)
                     AppendLog(line);
-                AppendLog(sequence.Name + (result.Exited ? " stopped" : result.Success ? " finished" : " failed"));
+                AppendLog(sequence.Name + " " + result.StatusText);
             }
             finally
             {
                 resourceLocks.Release(owner);
-                AppendLog("released " + sequence.Name);
-                RefreshDevices();
-                UpdateBusyState();
+                if (!IsDisposed && !Disposing)
+                {
+                    AppendLog("released " + sequence.Name);
+                    RefreshDevices();
+                    UpdateBusyState();
+                }
             }
         }
 
@@ -841,11 +844,24 @@ namespace usbrelay
 
         private void AppendLog(string message)
         {
+            if (IsDisposed || Disposing || logTextBox == null || logTextBox.IsDisposed)
+                return;
+
             if (InvokeRequired)
             {
-                BeginInvoke(new Action<string>(AppendLog), message);
+                try
+                {
+                    BeginInvoke(new Action<string>(AppendLog), message);
+                }
+                catch (InvalidOperationException)
+                {
+                    // The form can close between the lifecycle check and BeginInvoke.
+                }
                 return;
             }
+
+            if (IsDisposed || Disposing || logTextBox.IsDisposed)
+                return;
 
             logTextBox.AppendText(DateTime.Now.ToString("HH:mm:ss") + " " + message + Environment.NewLine);
         }

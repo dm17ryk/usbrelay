@@ -189,6 +189,12 @@ namespace usbrelay.Sequences
         public void Execute(SequenceExecutionContext context)
         {
             bool confirmed = context.Confirm(title, message);
+            if (string.IsNullOrEmpty(variableName))
+            {
+                context.Log.Add("discarded confirmation result = " + confirmed);
+                return;
+            }
+
             context.SetBooleanVariable(variableName, confirmed);
             context.Log.Add("stored boolean variable " + variableName + " = " + confirmed);
         }
@@ -230,7 +236,11 @@ namespace usbrelay.Sequences
             context.Log.Add("OutputMatches " + pattern + ": " + (matched ? "success" : "failure"));
 
             foreach (var action in matched ? successActions : failureActions)
+            {
                 action.Execute(context);
+                if (context.ExitRequested)
+                    return;
+            }
         }
     }
 
@@ -275,7 +285,11 @@ namespace usbrelay.Sequences
                 + (condition ? "success" : "failure"));
 
             foreach (var action in condition ? successActions : failureActions)
+            {
                 action.Execute(context);
+                if (context.ExitRequested)
+                    return;
+            }
         }
     }
 

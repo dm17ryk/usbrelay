@@ -349,7 +349,7 @@ namespace usbrelay
             foreach (string line in result.Log)
                 output.WriteLine(line);
 
-            output.WriteLine(Display(sequence.Name) + (result.Exited ? " stopped" : result.Success ? " finished" : " failed"));
+            output.WriteLine(Display(sequence.Name) + " " + result.StatusText);
             if (!result.Success && result.Error != null)
                 error.WriteLine(result.Error.Message);
 

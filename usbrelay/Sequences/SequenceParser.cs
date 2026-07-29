@@ -13,7 +13,7 @@ namespace usbrelay.Sequences
         private static readonly Regex ReadRegex = new Regex(@"^sequence\.ReadChannel\(""(?<serial>[^""]+)""\s*,\s*(?<channel>[^,)]+)\);?$", RegexOptions.Compiled);
         private static readonly Regex WaitRegex = new Regex(@"^sequence\.WaitChannel\(""(?<serial>[^""]+)""\s*,\s*(?<channel>[^,)]+)\s*,\s*RelayState\.(?<state>On|Off)\s*,\s*(?<timeout>\d+)\);?$", RegexOptions.Compiled);
         private static readonly Regex RunToolRegex = new Regex(@"^(var\s+\w+\s*=\s*)?sequence\.RunTool\(""(?<path>[^""]+)""\s*,\s*""(?<args>[^""]*)""\);?$", RegexOptions.Compiled);
-        private static readonly Regex ConfirmRegex = new Regex(@"^var\s+(?<variable>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*sequence\.Confirm\(""(?<title>[^""]*)""\s*,\s*""(?<message>[^""]*)""\);?$", RegexOptions.Compiled);
+        private static readonly Regex ConfirmRegex = new Regex(@"^(?:var\s+(?<variable>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*)?sequence\.Confirm\(""(?<title>[^""]*)""\s*,\s*""(?<message>[^""]*)""\);?$", RegexOptions.Compiled);
         private static readonly Regex IfBooleanRegex = new Regex(@"^if\s*\(\s*(?<negated>!)?\s*(?<variable>[A-Za-z_][A-Za-z0-9_]*)\s*\)\s*\{?$", RegexOptions.Compiled);
         private static readonly Regex IfRegex = new Regex(@"^if\s*\(\s*(?<variable>\w+)\.OutputMatches\(""(?<pattern>[^""]+)""\)\s*\)\s*\{?$", RegexOptions.Compiled);
         private static readonly Regex FailRegex = new Regex(@"^sequence\.Fail\(""(?<message>[^""]*)""\);?$", RegexOptions.Compiled);
