@@ -13,8 +13,11 @@ namespace usbrelay.Sequences
         private static readonly Regex ReadRegex = new Regex(@"^sequence\.ReadChannel\(""(?<serial>[^""]+)""\s*,\s*(?<channel>[^,)]+)\);?$", RegexOptions.Compiled);
         private static readonly Regex WaitRegex = new Regex(@"^sequence\.WaitChannel\(""(?<serial>[^""]+)""\s*,\s*(?<channel>[^,)]+)\s*,\s*RelayState\.(?<state>On|Off)\s*,\s*(?<timeout>\d+)\);?$", RegexOptions.Compiled);
         private static readonly Regex RunToolRegex = new Regex(@"^(var\s+\w+\s*=\s*)?sequence\.RunTool\(""(?<path>[^""]+)""\s*,\s*""(?<args>[^""]*)""\);?$", RegexOptions.Compiled);
-        private static readonly Regex IfRegex = new Regex(@"^if\s*\(\s*\w+\.OutputMatches\(""(?<pattern>[^""]+)""\)\s*\)\s*\{?$", RegexOptions.Compiled);
+        private static readonly Regex ConfirmRegex = new Regex(@"^var\s+(?<variable>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*sequence\.Confirm\(""(?<title>[^""]*)""\s*,\s*""(?<message>[^""]*)""\);?$", RegexOptions.Compiled);
+        private static readonly Regex IfBooleanRegex = new Regex(@"^if\s*\(\s*(?<negated>!)?\s*(?<variable>[A-Za-z_][A-Za-z0-9_]*)\s*\)\s*\{?$", RegexOptions.Compiled);
+        private static readonly Regex IfRegex = new Regex(@"^if\s*\(\s*(?<variable>\w+)\.OutputMatches\(""(?<pattern>[^""]+)""\)\s*\)\s*\{?$", RegexOptions.Compiled);
         private static readonly Regex FailRegex = new Regex(@"^sequence\.Fail\(""(?<message>[^""]*)""\);?$", RegexOptions.Compiled);
+        private static readonly Regex ExitRegex = new Regex(@"^sequence\.Exit\(""(?<message>[^""]*)""\);?$", RegexOptions.Compiled);
 
         public static SequenceParseResult Parse(string script)
         {
@@ -100,30 +103,28 @@ namespace usbrelay.Sequences
                     continue;
                 }
 
+                match = ConfirmRegex.Match(line);
+                if (match.Success)
+                {
+                    actions.Add(new ConfirmAction(
+                        match.Groups["variable"].Value,
+                        match.Groups["title"].Value,
+                        match.Groups["message"].Value));
+                    index++;
+                    continue;
+                }
+
+                match = IfBooleanRegex.Match(line);
+                if (match.Success)
+                {
+                    actions.Add(ParseConditional(match, booleanCondition: true, lines, ref index, diagnostics));
+                    continue;
+                }
+
                 match = IfRegex.Match(line);
                 if (match.Success)
                 {
-                    index++;
-                    var successActions = ParseBlock(lines, ref index, diagnostics, stopOnElseOrClose: true);
-                    var failureActions = new List<ISequenceAction>();
-
-                    if (index + 1 < lines.Count && lines[index] == "}" && lines[index + 1] == "else {")
-                    {
-                        index += 2;
-                        failureActions = ParseBlock(lines, ref index, diagnostics, stopOnElseOrClose: true);
-                    }
-                    else if (index < lines.Count && (lines[index] == "} else {" || lines[index] == "else {"))
-                    {
-                        index++;
-                        failureActions = ParseBlock(lines, ref index, diagnostics, stopOnElseOrClose: true);
-                    }
-
-                    if (index < lines.Count && lines[index] == "}")
-                        index++;
-                    else
-                        diagnostics.Add("Missing closing brace for if block.");
-
-                    actions.Add(new IfLastToolOutputMatchesAction(match.Groups["pattern"].Value, successActions, failureActions));
+                    actions.Add(ParseConditional(match, booleanCondition: false, lines, ref index, diagnostics));
                     continue;
                 }
 
@@ -135,11 +136,61 @@ namespace usbrelay.Sequences
                     continue;
                 }
 
+                match = ExitRegex.Match(line);
+                if (match.Success)
+                {
+                    actions.Add(new ExitAction(match.Groups["message"].Value));
+                    index++;
+                    continue;
+                }
+
                 diagnostics.Add("Unsupported sequence command: " + line);
                 index++;
             }
 
             return actions;
+        }
+
+        private static ISequenceAction ParseConditional(
+            Match match,
+            bool booleanCondition,
+            IReadOnlyList<string> lines,
+            ref int index,
+            List<string> diagnostics)
+        {
+            index++;
+            var successActions = ParseBlock(lines, ref index, diagnostics, stopOnElseOrClose: true);
+            var failureActions = new List<ISequenceAction>();
+
+            if (index + 1 < lines.Count && lines[index] == "}" && lines[index + 1] == "else {")
+            {
+                index += 2;
+                failureActions = ParseBlock(lines, ref index, diagnostics, stopOnElseOrClose: true);
+            }
+            else if (index < lines.Count && (lines[index] == "} else {" || lines[index] == "else {"))
+            {
+                index++;
+                failureActions = ParseBlock(lines, ref index, diagnostics, stopOnElseOrClose: true);
+            }
+
+            if (index < lines.Count && lines[index] == "}")
+                index++;
+            else
+                diagnostics.Add("Missing closing brace for if block.");
+
+            if (booleanCondition)
+            {
+                return new IfBooleanVariableAction(
+                    match.Groups["variable"].Value,
+                    match.Groups["negated"].Success,
+                    successActions,
+                    failureActions);
+            }
+
+            return new IfLastToolOutputMatchesAction(
+                match.Groups["pattern"].Value,
+                successActions,
+                failureActions);
         }
 
         private static List<string> Normalize(string script)

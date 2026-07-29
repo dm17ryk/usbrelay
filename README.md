@@ -184,6 +184,20 @@ sequence.PowerOn("6QMBS", 1);
 sequence.PowerOff("6QMBS", 2);
 ```
 
+GUI-only confirmations return `true` for OK and `false` for Cancel. CLI runs
+automatically return `true` without opening a dialog. Use `Exit` for an
+intentional successful stop:
+
+```
+var result = sequence.Confirm("Confirm power cycle", "Start the power cycle?");
+if (!result) {
+    sequence.Exit("User cancelled");
+}
+```
+
+`Fail` remains a failed sequence outcome; `Exit` logs its message, skips the
+remaining actions, and reports a successful stopped run.
+
 Named scripts are easier to read and identify the correct board when several
 boards have the same serial number:
 

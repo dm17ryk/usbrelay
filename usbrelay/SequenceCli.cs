@@ -18,11 +18,15 @@ namespace usbrelay
             "  sequence.WaitChannel(\"device\", channelOrName, RelayState.On|Off, timeoutMs);",
             "  sequence.Sleep(milliseconds);",
             "  var tool = sequence.RunTool(\"tool.exe\", \"arguments\");",
+            "  var result = sequence.Confirm(\"title\", \"message\");",
             "  sequence.Fail(\"message\");",
+            "  sequence.Exit(\"message\");",
             "",
             "Operators and control constructs:",
             "  if (tool.OutputMatches(\"regex\")) { ... } else { ... }",
+            "  if (!result) { sequence.Exit(\"User cancelled\"); }",
             "  var <name> = sequence.RunTool(...);",
+            "  var <name> = sequence.Confirm(...);",
             "  RelayState.On and RelayState.Off",
             "",
             "Device and channel selectors may be serial numbers, full device paths,",
@@ -345,7 +349,7 @@ namespace usbrelay
             foreach (string line in result.Log)
                 output.WriteLine(line);
 
-            output.WriteLine(Display(sequence.Name) + (result.Success ? " finished" : " failed"));
+            output.WriteLine(Display(sequence.Name) + (result.Exited ? " stopped" : result.Success ? " finished" : " failed"));
             if (!result.Success && result.Error != null)
                 error.WriteLine(result.Error.Message);
 

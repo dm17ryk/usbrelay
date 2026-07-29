@@ -15,6 +15,7 @@ namespace usbrelay
         private readonly SequenceRepository sequenceRepository;
         private readonly string layoutSettingsPath;
         private readonly Func<SequenceDefinition, bool> removeSequenceConfirmation;
+        private readonly Func<string, string, bool> sequenceConfirmation;
         private readonly SequenceResourceLocks resourceLocks = new SequenceResourceLocks();
         private readonly SequenceParseCache sequenceParseCache = new SequenceParseCache();
         private readonly List<SequenceDefinition> sequences = new List<SequenceDefinition>();
@@ -42,7 +43,7 @@ namespace usbrelay
         }
 
         public MainForm(IRelayBackend relayBackend, SequenceRepository sequenceRepository, string layoutSettingsPath)
-            : this(relayBackend, sequenceRepository, layoutSettingsPath, null)
+            : this(relayBackend, sequenceRepository, layoutSettingsPath, null, null)
         {
         }
 
@@ -51,12 +52,23 @@ namespace usbrelay
             SequenceRepository sequenceRepository,
             string layoutSettingsPath,
             Func<SequenceDefinition, bool> removeSequenceConfirmation)
+            : this(relayBackend, sequenceRepository, layoutSettingsPath, removeSequenceConfirmation, null)
+        {
+        }
+
+        public MainForm(
+            IRelayBackend relayBackend,
+            SequenceRepository sequenceRepository,
+            string layoutSettingsPath,
+            Func<SequenceDefinition, bool> removeSequenceConfirmation,
+            Func<string, string, bool> sequenceConfirmation)
         {
             this.relayNamingRepository = new RelayNamingRepository(RelayNamingRepository.DefaultPath);
             this.relayService = new RelayService(relayBackend, relayNamingRepository);
             this.sequenceRepository = sequenceRepository;
             this.layoutSettingsPath = layoutSettingsPath;
             this.removeSequenceConfirmation = removeSequenceConfirmation ?? ConfirmRemoveSequence;
+            this.sequenceConfirmation = sequenceConfirmation ?? ConfirmSequence;
             InitializeComponent();
         }
 
@@ -446,10 +458,11 @@ namespace usbrelay
                     new RelaySequenceBackend(relayService),
                     new ProcessExternalToolRunner(),
                     skipDelays: false,
-                    actionCompleted: RefreshDeviceStatusFromSequence));
+                    actionCompleted: RefreshDeviceStatusFromSequence,
+                    confirmation: sequenceConfirmation));
                 foreach (string line in result.Log)
                     AppendLog(line);
-                AppendLog(sequence.Name + (result.Success ? " finished" : " failed"));
+                AppendLog(sequence.Name + (result.Exited ? " stopped" : result.Success ? " finished" : " failed"));
             }
             finally
             {
@@ -458,6 +471,23 @@ namespace usbrelay
                 RefreshDevices();
                 UpdateBusyState();
             }
+        }
+
+        private bool ConfirmSequence(string title, string message)
+        {
+            if (IsDisposed || Disposing)
+                return false;
+
+            if (InvokeRequired)
+                return (bool)Invoke((Func<bool>)(() => ConfirmSequence(title, message)));
+
+            return MessageBox.Show(
+                this,
+                message ?? string.Empty,
+                title ?? string.Empty,
+                MessageBoxButtons.OKCancel,
+                MessageBoxIcon.Question,
+                MessageBoxDefaultButton.Button2) == DialogResult.OK;
         }
 
         private void RefreshDevices()

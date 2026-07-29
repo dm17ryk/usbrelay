@@ -36,6 +36,9 @@ namespace usbrelay
         private static readonly Regex ToolVariableRegex = new Regex(
             @"\bvar\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*sequence\.RunTool\s*\(",
             RegexOptions.Compiled);
+        private static readonly Regex ConfirmationVariableRegex = new Regex(
+            @"\bvar\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*sequence\.Confirm\s*\(",
+            RegexOptions.Compiled);
 
         public static SequenceCompletionResult GetCompletions(string text, int caretOffset, IEnumerable<RelayDevice> devices, bool force)
         {
@@ -98,6 +101,15 @@ namespace usbrelay
                     "}",
                     "Branch on " + variable + " output using a regular expression");
             }
+
+            foreach (string variable in GetConfirmationVariableNames(textBeforeCaret))
+            {
+                yield return new SequenceCompletionItem(
+                    "if (!" + variable + ") {" + Environment.NewLine
+                    + "    sequence.Exit(\"User cancelled\");" + Environment.NewLine
+                    + "}",
+                    "Exit when " + variable + " is false");
+            }
         }
 
         private static IEnumerable<SequenceCompletionItem> GetSequenceItems(IEnumerable<RelayDevice> devices, bool includeSequencePrefix)
@@ -117,7 +129,13 @@ namespace usbrelay
 
             yield return new SequenceCompletionItem(prefix + "Sleep(500)" + suffix, "Pause sequence execution");
             yield return new SequenceCompletionItem(prefix + "RunTool(\"tool.exe\", \"--args\")" + suffix, "Run an external process and wait for exit");
+            yield return new SequenceCompletionItem(
+                includeSequencePrefix
+                    ? "var confirmation = sequence.Confirm(\"title\", \"message\");"
+                    : "Confirm(\"title\", \"message\")",
+                "Ask for GUI confirmation and store the boolean result");
             yield return new SequenceCompletionItem(prefix + "Fail(\"message\")" + suffix, "Fail the current sequence");
+            yield return new SequenceCompletionItem(prefix + "Exit(\"message\")" + suffix, "Stop the sequence successfully");
         }
 
         private static IEnumerable<SequenceCompletionItem> FilterByPrefix(IEnumerable<SequenceCompletionItem> items, string prefix)
@@ -132,6 +150,14 @@ namespace usbrelay
         {
             var names = new List<string>();
             foreach (Match match in ToolVariableRegex.Matches(text ?? string.Empty))
+                names.Add(match.Groups["name"].Value);
+            return names;
+        }
+
+        private static IEnumerable<string> GetConfirmationVariableNames(string text)
+        {
+            var names = new List<string>();
+            foreach (Match match in ConfirmationVariableRegex.Matches(text ?? string.Empty))
                 names.Add(match.Groups["name"].Value);
             return names;
         }
