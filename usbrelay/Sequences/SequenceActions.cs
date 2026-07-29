@@ -171,6 +171,35 @@ namespace usbrelay.Sequences
         }
     }
 
+    internal sealed class ConfirmAction : ISequenceAction
+    {
+        private readonly string variableName;
+        private readonly string title;
+        private readonly string message;
+
+        public ConfirmAction(string variableName, string title, string message)
+        {
+            this.variableName = variableName;
+            this.title = title;
+            this.message = message;
+        }
+
+        public IEnumerable<RelayResource> Resources => new RelayResource[0];
+
+        public void Execute(SequenceExecutionContext context)
+        {
+            bool confirmed = context.Confirm(title, message);
+            if (string.IsNullOrEmpty(variableName))
+            {
+                context.Log.Add("discarded confirmation result = " + confirmed);
+                return;
+            }
+
+            context.SetBooleanVariable(variableName, confirmed);
+            context.Log.Add("stored boolean variable " + variableName + " = " + confirmed);
+        }
+    }
+
     internal sealed class IfLastToolOutputMatchesAction : ISequenceAction
     {
         private readonly string pattern;
@@ -207,7 +236,60 @@ namespace usbrelay.Sequences
             context.Log.Add("OutputMatches " + pattern + ": " + (matched ? "success" : "failure"));
 
             foreach (var action in matched ? successActions : failureActions)
+            {
                 action.Execute(context);
+                if (context.ExitRequested)
+                    return;
+            }
+        }
+    }
+
+    internal sealed class IfBooleanVariableAction : ISequenceAction
+    {
+        private readonly string variableName;
+        private readonly bool negated;
+        private readonly IReadOnlyList<ISequenceAction> successActions;
+        private readonly IReadOnlyList<ISequenceAction> failureActions;
+
+        public IfBooleanVariableAction(
+            string variableName,
+            bool negated,
+            IReadOnlyList<ISequenceAction> successActions,
+            IReadOnlyList<ISequenceAction> failureActions)
+        {
+            this.variableName = variableName;
+            this.negated = negated;
+            this.successActions = successActions;
+            this.failureActions = failureActions;
+        }
+
+        public IEnumerable<RelayResource> Resources
+        {
+            get
+            {
+                foreach (var action in successActions)
+                    foreach (var resource in action.Resources)
+                        yield return resource;
+                foreach (var action in failureActions)
+                    foreach (var resource in action.Resources)
+                        yield return resource;
+            }
+        }
+
+        public void Execute(SequenceExecutionContext context)
+        {
+            bool value = context.GetBooleanVariable(variableName);
+            bool condition = negated ? !value : value;
+            context.Log.Add(
+                "if " + (negated ? "!" : string.Empty) + variableName + ": "
+                + (condition ? "success" : "failure"));
+
+            foreach (var action in condition ? successActions : failureActions)
+            {
+                action.Execute(context);
+                if (context.ExitRequested)
+                    return;
+            }
         }
     }
 
@@ -225,6 +307,23 @@ namespace usbrelay.Sequences
         public void Execute(SequenceExecutionContext context)
         {
             throw new InvalidOperationException(message);
+        }
+    }
+
+    internal sealed class ExitAction : ISequenceAction
+    {
+        private readonly string message;
+
+        public ExitAction(string message)
+        {
+            this.message = message;
+        }
+
+        public IEnumerable<RelayResource> Resources => new RelayResource[0];
+
+        public void Execute(SequenceExecutionContext context)
+        {
+            context.Exit(message);
         }
     }
 

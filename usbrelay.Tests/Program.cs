@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Xml;
@@ -14,9 +15,14 @@ namespace usbrelay.Tests
 {
     internal static class Program
     {
+        private static readonly object exceptionLock = new object();
+        private static Exception firstUnhandledException;
+
         [STAThread]
         private static int Main()
         {
+            ConfigureExceptionReporting();
+
             if (Environment.GetCommandLineArgs().Contains("--write-large-stderr"))
             {
                 Console.Error.Write(new string('e', 256 * 1024));
@@ -29,6 +35,7 @@ namespace usbrelay.Tests
                 SequenceRepository_RoundTripsSequencesAsJson,
                 SequenceParser_ParsesDslAndResources,
                 SequenceParser_ParsesNamedDeviceAndChannel,
+                SequenceParser_ParsesBareConfirmation,
                 SequenceCompletionProvider_SuggestsSequenceCommands,
                 SequenceCompletionProvider_SuggestsRelayStateValues,
                 SequenceCompletionProvider_UsesConnectedDeviceChannels,
@@ -39,6 +46,9 @@ namespace usbrelay.Tests
                 SequenceResourceLocks_BlockOverlappingChannelsOnly,
                 SequenceResourceLocks_DistinguishesDuplicateSerialDevicePaths,
                 SequenceRunner_ExecutesRegexSuccessBranchWithFakeRelayAndTool,
+                SequenceRunner_ExecutesConfirmationBranches,
+                SequenceRunner_ExitsSuccessfullyAndSkipsRemainingActions,
+                SequenceRunner_FailStillReportsFailure,
                 SequenceRunner_LogsFriendlyDeviceAndChannelNames,
                 ProcessExternalToolRunner_DoesNotDeadlockWhenStderrPipeFills,
                 Program_SelectStartupMode_UsesCliForTerminalWithoutArguments,
@@ -89,11 +99,13 @@ namespace usbrelay.Tests
                 SequenceCli_StatusWritesReadinessInSingleOutputCall,
                 SequenceCli_StatusCleanLinePrefixIsPartOfSingleOutputCall,
                 SequenceCli_RunExecutesSavedSequence,
+                SequenceCli_RunAutoAcceptsConfirmation,
                 SequenceCli_RunCleanLinePrefixPrecedesStartedLine,
                 SequenceCli_RunFailsForInvalidMissingOrDuplicateName,
                 SequenceCli_RunFailsGracefullyWhenRepositoryCannotLoad,
                 MainForm_LoadsSavedSequencesIntoVisibleRows,
                 MainForm_RunButtonClickExecutesVisibleSequence,
+                MainForm_ConfirmationReceivesTitleAndMessage,
                 MainForm_DisablesBusySequenceRunButton,
                 MainForm_RemoveSequenceCancelKeepsSequence,
                 MainForm_RemoveSequenceConfirmDeletesSequence,
@@ -117,7 +129,54 @@ namespace usbrelay.Tests
                 Console.WriteLine("PASS " + test.Method.Name);
             }
 
+            DrainPendingUiCallbacks();
+            if (firstUnhandledException != null)
+            {
+                Console.Error.WriteLine("FAIL unhandled exception was reported during tests.");
+                return 1;
+            }
+
             return 0;
+        }
+
+        private static void ConfigureExceptionReporting()
+        {
+            Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+            Application.ThreadException += (sender, args) =>
+                ReportUnhandledException("UI thread", args.Exception);
+            AppDomain.CurrentDomain.UnhandledException += (sender, args) =>
+                ReportUnhandledException(
+                    "AppDomain",
+                    args.ExceptionObject as Exception
+                        ?? new InvalidOperationException(args.ExceptionObject == null
+                            ? "Unknown unhandled exception."
+                            : args.ExceptionObject.ToString()));
+            TaskScheduler.UnobservedTaskException += (sender, args) =>
+            {
+                args.SetObserved();
+                ReportUnhandledException("Task", args.Exception);
+            };
+        }
+
+        private static void ReportUnhandledException(string source, Exception exception)
+        {
+            lock (exceptionLock)
+            {
+                if (firstUnhandledException == null)
+                    firstUnhandledException = exception;
+
+                Console.Error.WriteLine("UNHANDLED " + source + " exception:");
+                Console.Error.WriteLine(exception);
+            }
+        }
+
+        private static void DrainPendingUiCallbacks()
+        {
+            for (int attempt = 0; attempt < 10; attempt++)
+            {
+                Application.DoEvents();
+                Thread.Sleep(10);
+            }
         }
 
         private static void SequenceRepository_RoundTripsSequencesAsJson()
@@ -171,6 +230,35 @@ namespace usbrelay.Tests
             AssertTrue(result.Resources.Contains(new RelayResource("DUT Power", "Main relay")), "Named channel resource should be claimed");
         }
 
+        private static void SequenceParser_ParsesBareConfirmation()
+        {
+            SequenceCompletionResult completions = SequenceCompletionProvider.GetCompletions(
+                "sequence.",
+                "sequence.".Length,
+                new RelayDevice[0],
+                force: false);
+            string completion = completions.Items.Single(item => item.Text.StartsWith("Confirm(")).Text;
+            SequenceParseResult parsed = SequenceParser.Parse("sequence." + completion + ";");
+
+            AssertTrue(parsed.IsValid, "Bare confirmation completion should parse");
+            bool callbackCalled = false;
+            SequenceRunResult result = SequenceRunner.Run(
+                parsed,
+                new FakeRelayBackend(new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0)),
+                new FakeExternalToolRunner(string.Empty),
+                confirmation: (title, message) =>
+                {
+                    callbackCalled = true;
+                    AssertEqual("title", title, "Bare confirmation title");
+                    AssertEqual("message", message, "Bare confirmation message");
+                    return false;
+                });
+
+            AssertTrue(result.Success, "Bare confirmation should complete successfully");
+            AssertTrue(callbackCalled, "Bare confirmation should invoke the callback");
+            AssertTrue(result.Log.Any(line => line.Contains("discarded confirmation result = False")), "Bare confirmation result should be logged");
+        }
+
         private static void SequenceCompletionProvider_SuggestsSequenceCommands()
         {
             var result = SequenceCompletionProvider.GetCompletions("sequence.", "sequence.".Length, new RelayDevice[0], force: false);
@@ -182,7 +270,9 @@ namespace usbrelay.Tests
             AssertContains(completions, "ReadChannel(\"6QMBS\", 1)", "ReadChannel completion");
             AssertContains(completions, "WaitChannel(\"6QMBS\", 1, RelayState.On, 3000)", "WaitChannel completion");
             AssertContains(completions, "RunTool(\"tool.exe\", \"--args\")", "RunTool completion");
+            AssertContains(completions, "Confirm(\"title\", \"message\")", "Confirm completion");
             AssertContains(completions, "Fail(\"message\")", "Fail completion");
+            AssertContains(completions, "Exit(\"message\")", "Exit completion");
         }
 
         private static void SequenceCompletionProvider_SuggestsRelayStateValues()
@@ -311,6 +401,96 @@ namespace usbrelay.Tests
             AssertFalse(relay.GetChannelState("6QMBS", 1), "CH1 should be off");
             AssertTrue(relay.GetChannelState("6QMBS", 2), "CH2 should be on after success branch");
             AssertTrue(result.Log.Any(line => line.Contains("OutputMatches READY|OK: success")), "Regex match should be logged");
+        }
+
+        private static void SequenceRunner_ExecutesConfirmationBranches()
+        {
+            string script = string.Join(Environment.NewLine, new[]
+            {
+                "var result = sequence.Confirm(\"Confirm power\", \"Start power?\");",
+                "if (result) {",
+                "    sequence.PowerOn(\"6QMBS\", 1);",
+                "} else {",
+                "    sequence.PowerOn(\"6QMBS\", 2);",
+                "}"
+            });
+            SequenceParseResult parsed = SequenceParser.Parse(script);
+            AssertTrue(parsed.IsValid, "Confirmation branch script should parse");
+
+            string trueTitle = null;
+            string trueMessage = null;
+            var trueRelay = new FakeRelayBackend(new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0));
+            SequenceRunResult trueResult = SequenceRunner.Run(
+                parsed,
+                trueRelay,
+                new FakeExternalToolRunner(string.Empty),
+                confirmation: (title, message) =>
+                {
+                    trueTitle = title;
+                    trueMessage = message;
+                    return true;
+                });
+
+            AssertTrue(trueResult.Success, "Confirmed sequence should succeed");
+            AssertFalse(trueResult.Exited, "Confirmed sequence should not be marked exited");
+            AssertEqual("finished", trueResult.StatusText, "Confirmed sequence status");
+            AssertTrue(trueRelay.GetChannelState("6QMBS", 1), "OK branch should turn CH1 on");
+            AssertFalse(trueRelay.GetChannelState("6QMBS", 2), "OK branch should not turn CH2 on");
+            AssertEqual("Confirm power", trueTitle, "Confirmation title");
+            AssertEqual("Start power?", trueMessage, "Confirmation message");
+
+            var falseRelay = new FakeRelayBackend(new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0));
+            SequenceRunResult falseResult = SequenceRunner.Run(
+                parsed,
+                falseRelay,
+                new FakeExternalToolRunner(string.Empty),
+                confirmation: (title, message) => false);
+
+            AssertTrue(falseResult.Success, "Cancelled branch should still complete successfully");
+            AssertFalse(falseResult.Exited, "Cancelled branch without Exit should not be marked exited");
+            AssertEqual("finished", falseResult.StatusText, "Cancelled sequence status");
+            AssertFalse(falseRelay.GetChannelState("6QMBS", 1), "Cancel branch should not turn CH1 on");
+            AssertTrue(falseRelay.GetChannelState("6QMBS", 2), "Cancel branch should turn CH2 on");
+            AssertTrue(falseResult.Log.Any(line => line.Contains("stored boolean variable result = False")), "Confirmation result should be logged");
+        }
+
+        private static void SequenceRunner_ExitsSuccessfullyAndSkipsRemainingActions()
+        {
+            string script = string.Join(Environment.NewLine, new[]
+            {
+                "var result = sequence.Confirm(\"Confirm power\", \"Start power?\");",
+                "if (!result) {",
+                "    sequence.Exit(\"User cancelled\");",
+                "}",
+                "sequence.PowerOn(\"6QMBS\", 1);"
+            });
+            var relay = new FakeRelayBackend(new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0));
+
+            SequenceRunResult result = SequenceRunner.Run(
+                SequenceParser.Parse(script),
+                relay,
+                new FakeExternalToolRunner(string.Empty),
+                confirmation: (title, message) => false);
+
+            AssertTrue(result.Success, "Exit should be a successful run");
+            AssertTrue(result.Exited, "Exit should mark the run as exited");
+            AssertTrue(result.Error == null, "Exit should not expose an error");
+            AssertEqual("stopped", result.StatusText, "Exit sequence status");
+            AssertFalse(relay.GetChannelState("6QMBS", 1), "Actions after Exit should not execute");
+            AssertTrue(result.Log.Any(line => line.Contains("EXIT: User cancelled")), "Exit message should be logged");
+        }
+
+        private static void SequenceRunner_FailStillReportsFailure()
+        {
+            SequenceRunResult result = SequenceRunner.Run(
+                SequenceParser.Parse("sequence.Fail(\"Expected failure\");"),
+                new FakeRelayBackend(new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0)),
+                new FakeExternalToolRunner(string.Empty));
+
+            AssertFalse(result.Success, "Fail should report an unsuccessful run");
+            AssertFalse(result.Exited, "Fail should not report a graceful exit");
+            AssertTrue(result.Error != null, "Fail should expose an error");
+            AssertEqual("failed", result.StatusText, "Failed sequence status");
         }
 
         private static void SequenceRunner_LogsFriendlyDeviceAndChannelNames()
@@ -938,6 +1118,8 @@ namespace usbrelay.Tests
             AssertEqual(0, cli.Functions(), "Sequence functions exit code");
             AssertTrue(output.ToString().Contains("sequence.PowerOn"), "Functions should list PowerOn");
             AssertTrue(output.ToString().Contains("sequence.RunTool"), "Functions should list RunTool");
+            AssertTrue(output.ToString().Contains("sequence.Confirm"), "Functions should list Confirm");
+            AssertTrue(output.ToString().Contains("sequence.Exit"), "Functions should list Exit");
             AssertTrue(output.ToString().Contains("OutputMatches"), "Functions should list OutputMatches");
             AssertTrue(output.ToString().Contains("RelayState.On"), "Functions should list RelayState values");
             AssertEqual(string.Empty, error.ToString(), "Sequence CRUD stderr");
@@ -1012,6 +1194,35 @@ namespace usbrelay.Tests
             AssertTrue(relay.GetChannelState("6QMBS", 1), "Run should turn CH1 on");
             AssertTrue(harness.Output.ToString().Contains("Turn on finished"), "Run should print finish line");
             AssertEqual(string.Empty, harness.Error.ToString(), "Run stderr");
+        }
+
+        private static void SequenceCli_RunAutoAcceptsConfirmation()
+        {
+            var relay = new FakeRelayBackend(new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0));
+            var harness = CreateSequenceCliHarness(
+                relay,
+                new SequenceDefinition
+                {
+                    Name = "CLI confirmation",
+                    RunButtonText = "Run",
+                    Description = "CLI confirmation",
+                    Script = string.Join(Environment.NewLine, new[]
+                    {
+                        "var result = sequence.Confirm(\"Confirm power\", \"Start power?\");",
+                        "if (!result) {",
+                        "    sequence.Exit(\"User cancelled\");",
+                        "}",
+                        "sequence.PowerOn(\"6QMBS\", 1);"
+                    })
+                });
+
+            int exitCode = harness.Cli.Run("CLI confirmation");
+
+            AssertEqual(0, exitCode, "CLI confirmation exit code");
+            AssertTrue(relay.GetChannelState("6QMBS", 1), "CLI confirmation should auto-accept and execute the sequence");
+            AssertTrue(harness.Output.ToString().Contains("auto-accepted (CLI)"), "CLI confirmation should log automatic acceptance");
+            AssertTrue(harness.Output.ToString().Contains("CLI confirmation finished"), "CLI confirmation should finish normally");
+            AssertEqual(string.Empty, harness.Error.ToString(), "CLI confirmation stderr");
         }
 
         private static void SequenceCli_RunCleanLinePrefixPrecedesStartedLine()
@@ -1138,6 +1349,54 @@ namespace usbrelay.Tests
                 InvokePrivate(form, "SequenceGrid_CellClick", sequenceList, new DataGridViewCellEventArgs(runColumnIndex, 0));
                 WaitUntil(() => relay.GetChannelState("6QMBS", 1), "Run button should execute sequence and turn CH1 on");
             }
+        }
+
+        private static void MainForm_ConfirmationReceivesTitleAndMessage()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "usbrelay-tests-" + Guid.NewGuid().ToString("N"), "sequences.json");
+            var repository = new SequenceRepository(path);
+            repository.Save(new[]
+            {
+                new SequenceDefinition
+                {
+                    Name = "Confirmed GUI sequence",
+                    RunButtonText = "Run",
+                    Description = "GUI confirmation test",
+                    Script = string.Join(Environment.NewLine, new[]
+                    {
+                        "var result = sequence.Confirm(\"GUI title\", \"GUI message\");",
+                        "if (result) {",
+                        "    sequence.PowerOn(\"6QMBS\", 1);",
+                        "}"
+                    })
+                }
+            });
+
+            string title = null;
+            string message = null;
+            var relay = new FakeRelayBackend(new RelayDevice("6QMBS", RelayDeviceType.EightChannel, 8, 0));
+            using (var form = new MainForm(
+                relay,
+                repository,
+                null,
+                null,
+                (confirmationTitle, confirmationMessage) =>
+                {
+                    title = confirmationTitle;
+                    message = confirmationMessage;
+                    return true;
+                }))
+            {
+                InvokePrivate(form, "LoadSequences");
+                var sequenceList = (DataGridView)GetPrivateField(form, "sequenceGrid");
+                int runColumnIndex = sequenceList.Columns["RunColumn"].Index;
+
+                InvokePrivate(form, "SequenceGrid_CellClick", sequenceList, new DataGridViewCellEventArgs(runColumnIndex, 0));
+                WaitUntil(() => relay.GetChannelState("6QMBS", 1), "GUI confirmation should allow the sequence to run");
+            }
+
+            AssertEqual("GUI title", title, "GUI confirmation title");
+            AssertEqual("GUI message", message, "GUI confirmation message");
         }
 
         private static void MainForm_DisablesBusySequenceRunButton()

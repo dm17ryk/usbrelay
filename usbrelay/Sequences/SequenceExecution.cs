@@ -8,25 +8,41 @@ namespace usbrelay.Sequences
     public sealed class SequenceRunResult
     {
         public SequenceRunResult(bool success, IEnumerable<string> log, Exception error)
+            : this(success, log, error, exited: false)
+        {
+        }
+
+        public SequenceRunResult(bool success, IEnumerable<string> log, Exception error, bool exited)
         {
             Success = success;
             Log = new List<string>(log);
             Error = error;
+            Exited = exited;
         }
 
         public bool Success { get; }
         public IReadOnlyList<string> Log { get; }
         public Exception Error { get; }
+        public bool Exited { get; }
+        public string StatusText => Exited ? "stopped" : Success ? "finished" : "failed";
     }
 
     public sealed class SequenceExecutionContext
     {
-        public SequenceExecutionContext(ISequenceRelayBackend relay, IExternalToolRunner toolRunner, bool skipDelays, Action actionCompleted)
+        private readonly Dictionary<string, bool> booleanVariables = new Dictionary<string, bool>(StringComparer.Ordinal);
+
+        public SequenceExecutionContext(
+            ISequenceRelayBackend relay,
+            IExternalToolRunner toolRunner,
+            bool skipDelays,
+            Action actionCompleted,
+            Func<string, string, bool> confirmation = null)
         {
             Relay = relay;
             ToolRunner = toolRunner;
             SkipDelays = skipDelays;
             ActionCompleted = actionCompleted;
+            Confirmation = confirmation;
             Log = new List<string>();
         }
 
@@ -34,8 +50,43 @@ namespace usbrelay.Sequences
         public IExternalToolRunner ToolRunner { get; }
         public bool SkipDelays { get; }
         public Action ActionCompleted { get; }
+        public Func<string, string, bool> Confirmation { get; }
         public List<string> Log { get; }
         public ExternalToolResult LastToolResult { get; set; }
+        public bool ExitRequested { get; private set; }
+
+        public void SetBooleanVariable(string name, bool value)
+        {
+            booleanVariables[name] = value;
+        }
+
+        public bool GetBooleanVariable(string name)
+        {
+            bool value;
+            if (!booleanVariables.TryGetValue(name, out value))
+                throw new InvalidOperationException("Sequence boolean variable is not defined: " + name);
+
+            return value;
+        }
+
+        public bool Confirm(string title, string message)
+        {
+            if (Confirmation == null)
+            {
+                Log.Add("confirm \"" + title + "\": auto-accepted (CLI)");
+                return true;
+            }
+
+            bool confirmed = Confirmation(title, message);
+            Log.Add("confirm \"" + title + "\": " + (confirmed ? "OK" : "Cancel"));
+            return confirmed;
+        }
+
+        public void Exit(string message)
+        {
+            Log.Add("EXIT: " + (message ?? string.Empty));
+            ExitRequested = true;
+        }
 
         public void NotifyActionCompleted()
         {
@@ -82,9 +133,10 @@ namespace usbrelay.Sequences
             ISequenceRelayBackend relay,
             IExternalToolRunner toolRunner,
             bool skipDelays = true,
-            Action actionCompleted = null)
+            Action actionCompleted = null,
+            Func<string, string, bool> confirmation = null)
         {
-            var context = new SequenceExecutionContext(relay, toolRunner, skipDelays, actionCompleted);
+            var context = new SequenceExecutionContext(relay, toolRunner, skipDelays, actionCompleted, confirmation);
 
             if (!sequence.IsValid)
                 return new SequenceRunResult(false, sequence.Diagnostics, new InvalidOperationException("Sequence is invalid."));
@@ -94,6 +146,9 @@ namespace usbrelay.Sequences
                 foreach (var action in sequence.Actions)
                 {
                     action.Execute(context);
+                    if (context.ExitRequested)
+                        return new SequenceRunResult(true, context.Log, null, exited: true);
+
                     context.NotifyActionCompleted();
                 }
 
