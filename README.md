@@ -14,7 +14,7 @@ To build this project, please add [Costura.Fody](https://github.com/Fody/Costura
 
 Many boards use the same serial number, such as `BITFT` or `6QMBS`. The application enumerates every connected board and keeps its complete Windows HID device path. The path uniquely identifies a board even when serial numbers are duplicated.
 
-Run `usbrelay --list` to see all boards. In the GUI, click **Edit names** to assign a friendly device name and optional names to its channels. Names are stored in `%APPDATA%\usbrelay\device-names.json` and are keyed by the unique device path, so adding more boards does not require changing the application.
+Run `usbrelay --list` to see all boards. In the GUI, use **Devices > Edit names** to assign a friendly device name and optional names to its channels. Names are stored in `%APPDATA%\usbrelay\device-names.json` and are keyed by the unique device path, so adding more boards does not require changing the application.
 
 For the two boards in the example, the unique path portions are `1746991` and `2a5582f3`. After assigning names such as `DUT power` and `Fan power`, use those names from the CLI:
 
@@ -101,7 +101,7 @@ Current version is implemented in C# (VS2019). Porting to other platforms should
 
 ## GUI themes and command-line coverage
 
-The GUI starts with a dark theme. Use the **Theme** selector to switch between
+The GUI starts with a dark theme. Use **View > Theme** to switch between
 Dark and Light; the preference is saved in `%APPDATA%\usbrelay\theme.json`.
 The main window, device naming dialog, sequence editor, syntax highlighting,
 completion popup and status tables use the selected theme. ON/OFF text remains
@@ -133,11 +133,18 @@ presentation features. CLI confirmations auto-accept; MCP runs can choose the
 Confirm result using `confirm`. All Off attempts every channel, reports any
 failures and exits nonzero when at least one operation fails.
 
+The menu bar contains **Sequences** (add, edit, remove), **Devices** (refresh,
+edit names, all off), **View** (theme), **Tools** (AI/MCP setup), and **Help**.
+Use F5 to rediscover devices, Ctrl+N to add a sequence, Ctrl+E to edit the
+selected sequence, and F1 for the offline quick-start guide. **Help > About**
+shows the application version and project link. Sequence Run buttons and relay
+switches stay in the main view; maintenance actions live in the menus.
+
 ## MCP server
 
 ### Automatic client setup and skills
 
-Open **AI tools** in the GUI, select your clients, then use **Preview** or
+Open **Tools > AI tools and MCP setup** in the GUI, select your clients, then use **Preview** or
 **Install**. Both the MCP registration and the `usb-relay` skill are installed
 for the current Windows user. The same setup is available from the CLI:
 
