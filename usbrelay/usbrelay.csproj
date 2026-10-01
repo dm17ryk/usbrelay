@@ -204,6 +204,8 @@
     </Compile>
     <Compile Include="AppAssets.cs" />
     <Compile Include="GuiTheme.cs" />
+    <Compile Include="GuiControls.cs" />
+    <Compile Include="HelpForm.cs" />
     <Compile Include="IntegrationInstaller.cs" />
     <Compile Include="IntegrationCommand.cs" />
     <Compile Include="IntegrationForm.cs" />

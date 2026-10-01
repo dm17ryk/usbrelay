@@ -10,8 +10,16 @@ namespace usbrelay
 {
     public sealed class MainForm : Form
     {
-        private GuiTheme theme = new GuiTheme(ThemeSettings.Load(ThemeSettings.DefaultPath).Theme);
-        private ComboBox themeSelector;
+        private GuiTheme theme;
+        private readonly string themeSettingsPath;
+        private ToolStripMenuItem darkThemeMenuItem;
+        private ToolStripMenuItem lightThemeMenuItem;
+        private ToolStripMenuItem editSequenceMenuItem;
+        private ToolStripMenuItem removeSequenceMenuItem;
+        private ToolStripMenuItem editNamesMenuItem;
+        private ToolStripMenuItem allOffMenuItem;
+        private Label sequencesHeading;
+        private Label devicesHeading;
         private readonly RelayService relayService;
         private readonly RelayNamingRepository relayNamingRepository;
         private readonly SequenceRepository sequenceRepository;
@@ -21,6 +29,7 @@ namespace usbrelay
         private readonly SequenceResourceLocks resourceLocks = new SequenceResourceLocks();
         private readonly SequenceParseCache sequenceParseCache = new SequenceParseCache();
         private readonly List<SequenceDefinition> sequences = new List<SequenceDefinition>();
+        private readonly HashSet<SequenceDefinition> runningSequences = new HashSet<SequenceDefinition>();
         private IReadOnlyList<RelayDevice> currentDevices = new RelayDevice[0];
 
         private DataGridView sequenceGrid;
@@ -63,8 +72,11 @@ namespace usbrelay
             SequenceRepository sequenceRepository,
             string layoutSettingsPath,
             Func<SequenceDefinition, bool> removeSequenceConfirmation,
-            Func<string, string, bool> sequenceConfirmation)
+            Func<string, string, bool> sequenceConfirmation,
+            string themeSettingsPath = null)
         {
+            this.themeSettingsPath = themeSettingsPath ?? ThemeSettings.DefaultPath;
+            theme = new GuiTheme(ThemeSettings.Load(this.themeSettingsPath).Theme);
             this.relayNamingRepository = new RelayNamingRepository(RelayNamingRepository.DefaultPath);
             this.relayService = new RelayService(relayBackend, relayNamingRepository);
             this.sequenceRepository = sequenceRepository;
@@ -113,7 +125,7 @@ namespace usbrelay
             Width = 1180;
             Height = 720;
             MinimumSize = new Size(840, 520);
-            Font = new Font("Segoe UI", 9F);
+            Font = new Font("Segoe UI", 9.5F);
             Icon icon = AppAssets.LoadApplicationIcon();
             if (icon != null)
                 Icon = icon;
@@ -128,7 +140,89 @@ namespace usbrelay
             splitContainer.Panel1.Controls.Add(CreateSequencePane());
             splitContainer.Panel2.Controls.Add(CreateDevicePane());
             Controls.Add(splitContainer);
+            MainMenuStrip = CreateMenu();
+            Controls.Add(MainMenuStrip);
             Resize += (s, e) => ResizeDeviceRows();
+        }
+
+        private MenuStrip CreateMenu()
+        {
+            var menu = new MenuStrip { Name = "mainMenu", Dock = DockStyle.Top, Padding = new Padding(8, 4, 8, 4) };
+            var sequencesMenu = new ToolStripMenuItem("&Sequences");
+            sequencesMenu.DropDownItems.Add(MenuAction("&Add sequence...", "addSequenceMenuItem", AddSequence, Keys.Control | Keys.N));
+            editSequenceMenuItem = MenuAction("&Edit sequence...", "editSequenceMenuItem", EditSequence, Keys.Control | Keys.E);
+            removeSequenceMenuItem = MenuAction("&Remove sequence...", "removeSequenceMenuItem", RemoveSequence);
+            sequencesMenu.DropDownItems.Add(editSequenceMenuItem);
+            sequencesMenu.DropDownItems.Add(removeSequenceMenuItem);
+            sequencesMenu.DropDownOpening += (s, e) => UpdateSequenceMenuState();
+
+            var devicesMenu = new ToolStripMenuItem("&Devices");
+            devicesMenu.DropDownItems.Add(MenuAction("&Refresh devices", "refreshDevicesMenuItem", RefreshDevices, Keys.F5));
+            editNamesMenuItem = MenuAction("Edit &names...", "editNamesMenuItem", EditDeviceNames);
+            allOffMenuItem = MenuAction("All &off", "allOffMenuItem", AllOff);
+            devicesMenu.DropDownItems.Add(editNamesMenuItem);
+            devicesMenu.DropDownItems.Add(new ToolStripSeparator());
+            devicesMenu.DropDownItems.Add(allOffMenuItem);
+
+            var viewMenu = new ToolStripMenuItem("&View");
+            var themeMenu = new ToolStripMenuItem("&Theme") { Name = "themeMenuItem" };
+            darkThemeMenuItem = MenuAction("&Dark", "darkThemeMenuItem", () => ChangeTheme("dark"));
+            lightThemeMenuItem = MenuAction("&Light", "lightThemeMenuItem", () => ChangeTheme("light"));
+            themeMenu.DropDownItems.AddRange(new ToolStripItem[] { darkThemeMenuItem, lightThemeMenuItem });
+            viewMenu.DropDownItems.Add(themeMenu);
+            UpdateThemeMenuState();
+
+            var toolsMenu = new ToolStripMenuItem("&Tools");
+            toolsMenu.DropDownItems.Add(MenuAction("&AI tools and MCP setup...", "aiToolsMenuItem", () =>
+            {
+                using (var form = new IntegrationForm(theme)) form.ShowDialog(this);
+            }));
+            var helpMenu = new ToolStripMenuItem("&Help");
+            helpMenu.DropDownItems.Add(MenuAction("&Quick start...", "helpMenuItem", () =>
+            {
+                using (var form = new HelpForm(theme)) form.ShowDialog(this);
+            }, Keys.F1));
+            helpMenu.DropDownItems.Add(new ToolStripSeparator());
+            helpMenu.DropDownItems.Add(MenuAction("&About USB Relay Control...", "aboutMenuItem", () =>
+            {
+                using (var form = new AboutForm(theme)) form.ShowDialog(this);
+            }));
+            menu.Items.AddRange(new ToolStripItem[] { sequencesMenu, devicesMenu, viewMenu, toolsMenu, helpMenu });
+            UpdateSequenceMenuState();
+            System.Diagnostics.Trace.WriteLine("[MainForm] Menu created: sequences, devices, view/theme, tools/MCP, help/about");
+            return menu;
+        }
+
+        private ToolStripMenuItem MenuAction(string text, string name, Action action, Keys shortcut = Keys.None)
+        {
+            var item = new ToolStripMenuItem(text) { Name = name, ShortcutKeys = shortcut, AccessibleName = text.Replace("&", "") };
+            item.Click += (s, e) =>
+            {
+                System.Diagnostics.Trace.WriteLine("[MainForm] Menu action=" + name);
+                action();
+            };
+            return item;
+        }
+
+        private void UpdateSequenceMenuState()
+        {
+            bool selected = selectedSequence != null;
+            bool busy = selected && IsSequenceBusy(selectedSequence);
+            bool enabled = selected && !busy;
+            if (editSequenceMenuItem != null) editSequenceMenuItem.Enabled = enabled;
+            if (removeSequenceMenuItem != null) removeSequenceMenuItem.Enabled = enabled;
+            System.Diagnostics.Trace.WriteLine("[MainForm] Sequence menu selection=" + (selectedSequence?.Name ?? "none") + ", busy=" + busy + ", edit/remove enabled=" + enabled);
+        }
+
+        private bool IsSequenceBusy(SequenceDefinition sequence)
+        {
+            return runningSequences.Contains(sequence) || ResolveResources(sequenceParseCache.Get(sequence).Resources).Any(resource => resourceLocks.IsBusy(resource));
+        }
+
+        private void UpdateThemeMenuState()
+        {
+            darkThemeMenuItem.Checked = theme.IsDark;
+            lightThemeMenuItem.Checked = !theme.IsDark;
         }
 
         private Control CreateSequencePane()
@@ -138,25 +232,15 @@ namespace usbrelay
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
                 RowCount = 4,
-                Padding = new Padding(8)
+                Padding = new Padding(12, 8, 6, 12)
             };
             sequencePaneLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             sequencePaneLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 42));
             sequencePaneLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             sequencePaneLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 58));
 
-            var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
-            toolbar.Controls.Add(MiniButton("Add", (s, e) => AddSequence()));
-            toolbar.Controls.Add(MiniButton("Edit", (s, e) => EditSequence()));
-            toolbar.Controls.Add(MiniButton("Remove", (s, e) => RemoveSequence()));
-            toolbar.Controls.Add(new Label { Text = "Theme", AutoSize = true, Padding = new Padding(6, 6, 0, 0) });
-            themeSelector = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 76, AccessibleName = "GUI theme" };
-            themeSelector.Items.AddRange(new object[] { "Dark", "Light" });
-            themeSelector.SelectedIndex = theme.IsDark ? 0 : 1;
-            themeSelector.SelectedIndexChanged += (s, e) => ChangeTheme();
-            toolbar.Controls.Add(themeSelector);
-            toolbar.Controls.Add(MiniButton("AI tools", (s, e) => { using (var form = new IntegrationForm(theme)) form.ShowDialog(this); }));
-            sequencePaneLayout.Controls.Add(toolbar, 0, 0);
+            sequencesHeading = new Label { Text = "Sequences", AutoSize = true, Margin = new Padding(0, 6, 0, 10) };
+            sequencePaneLayout.Controls.Add(sequencesHeading, 0, 0);
 
             sequenceGrid = new DataGridView
             {
@@ -172,11 +256,16 @@ namespace usbrelay
                 SelectionMode = DataGridViewSelectionMode.FullRowSelect,
                 ScrollBars = ScrollBars.Vertical,
                 BackgroundColor = SystemColors.Window,
-                BorderStyle = BorderStyle.FixedSingle
+                BorderStyle = BorderStyle.None,
+                CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal,
+                AccessibleName = "Saved sequences"
             };
             sequenceGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "NameColumn", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, ReadOnly = true });
-            sequenceGrid.Columns.Add(new DataGridViewButtonColumn { Name = "RunColumn", Width = 86, UseColumnTextForButtonValue = false });
+            sequenceGrid.Columns.Add(new DataGridViewButtonColumn { Name = "RunColumn", Width = 106, MinimumWidth = 64, UseColumnTextForButtonValue = false });
             sequenceGrid.CellClick += SequenceGrid_CellClick;
+            sequenceGrid.CellPainting += PaintSequenceRunButton;
+            sequenceGrid.CellMouseEnter += (s, e) => { if (e.RowIndex >= 0 && e.ColumnIndex == 1) sequenceGrid.InvalidateCell(e.ColumnIndex, e.RowIndex); };
+            sequenceGrid.CellMouseLeave += (s, e) => { if (e.RowIndex >= 0 && e.ColumnIndex == 1) sequenceGrid.InvalidateCell(e.ColumnIndex, e.RowIndex); };
             sequenceGrid.SelectionChanged += (s, e) => SelectGridSequence();
             sequenceGrid.CellToolTipTextNeeded += SequenceGrid_CellToolTipTextNeeded;
             sequencePaneLayout.Controls.Add(sequenceGrid, 0, 1);
@@ -188,6 +277,8 @@ namespace usbrelay
                 Multiline = true,
                 ReadOnly = true,
                 ScrollBars = ScrollBars.Vertical,
+                BorderStyle = BorderStyle.None,
+                AccessibleName = "Sequence log",
                 BackColor = Color.FromArgb(11, 18, 32),
                 ForeColor = Color.WhiteSmoke,
                 Font = new Font("Consolas", 9F)
@@ -204,19 +295,15 @@ namespace usbrelay
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
                 RowCount = 4,
-                Padding = new Padding(8)
+                Padding = new Padding(6, 8, 12, 12)
             };
             devicePaneLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             devicePaneLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 62));
             devicePaneLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             devicePaneLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 38));
 
-            var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
-            toolbar.Controls.Add(MiniButton("Refresh", (s, e) => RefreshDevices()));
-            toolbar.Controls.Add(MiniButton("Edit names", (s, e) => EditDeviceNames()));
-            toolbar.Controls.Add(MiniButton("All Off", (s, e) => AllOff()));
-            toolbar.Controls.Add(new Label { Text = "Discovered on load, refreshable", AutoSize = true, Padding = new Padding(6, 6, 0, 0) });
-            devicePaneLayout.Controls.Add(toolbar, 0, 0);
+            devicesHeading = new Label { Text = "Devices", AutoSize = true, Margin = new Padding(0, 6, 0, 10) };
+            devicePaneLayout.Controls.Add(devicesHeading, 0, 0);
 
             devicesPanel = new FlowLayoutPanel
             {
@@ -239,12 +326,15 @@ namespace usbrelay
                 AutoGenerateColumns = false,
                 AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells,
                 BackgroundColor = SystemColors.Window,
-                BorderStyle = BorderStyle.FixedSingle,
+                BorderStyle = BorderStyle.None,
+                CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal,
+                ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None,
                 ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize,
                 MultiSelect = false,
                 RowHeadersVisible = false,
                 SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-                ScrollBars = ScrollBars.Both
+                ScrollBars = ScrollBars.Both,
+                AccessibleName = "Device and channel status"
             };
             statusGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "StatusName", HeaderText = "Name", Width = 110 });
             statusGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "StatusSerial", HeaderText = "Serial", Width = 82 });
@@ -281,7 +371,7 @@ namespace usbrelay
                     e.CellStyle.ForeColor = theme.Muted;
                     e.CellStyle.BackColor = theme.Surface;
                 }
-                e.CellStyle.SelectionForeColor = theme.IsDark ? e.CellStyle.ForeColor : SystemColors.HighlightText;
+                e.CellStyle.SelectionForeColor = e.CellStyle.ForeColor;
                 e.CellStyle.SelectionBackColor = theme.Selection;
             };
             devicePaneLayout.Controls.Add(statusGrid, 0, 3);
@@ -289,27 +379,18 @@ namespace usbrelay
             return devicePaneLayout;
         }
 
-        private Button MiniButton(string text, EventHandler click)
+        private void ChangeTheme(string name)
         {
-            var button = new Button
+            name = ThemeSettings.Normalize(name);
+            if (theme.IsDark == (name == "dark"))
             {
-                Text = text,
-                AutoSize = true,
-                AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                Margin = new Padding(2),
-                Padding = new Padding(4, 1, 4, 1)
-            };
-            button.Click += click;
-            return button;
-        }
-
-        private void ChangeTheme()
-        {
-            string name = themeSelector.SelectedIndex == 0 ? "dark" : "light";
+                System.Diagnostics.Trace.WriteLine("[MainForm] Theme unchanged=" + name);
+                return;
+            }
             System.Diagnostics.Trace.WriteLine("[MainForm] Theme selected=" + name);
             try
             {
-                new ThemeSettings { Theme = name }.Save(ThemeSettings.DefaultPath);
+                new ThemeSettings { Theme = name }.Save(themeSettingsPath);
             }
             catch (Exception ex)
             {
@@ -318,7 +399,9 @@ namespace usbrelay
             theme = new GuiTheme(name);
             theme.Apply(this);
             theme.ApplyTitleBar(this);
-            RefreshDevices();
+            UpdateThemeMenuState();
+            RenderDeviceCards();
+            UpdateBusyState();
             AppendLog("Theme changed to " + name);
         }
 
@@ -346,6 +429,7 @@ namespace usbrelay
 
         private void RenderSequences()
         {
+            SequenceDefinition preferredSelection = selectedSequence;
             sequenceGrid.Rows.Clear();
             sequenceParseCache.Retain(sequences);
 
@@ -354,22 +438,29 @@ namespace usbrelay
                 int rowIndex = sequenceGrid.Rows.Add(sequence.Name, sequence.DisplayRunButtonText);
                 var row = sequenceGrid.Rows[rowIndex];
                 row.Tag = sequence;
-                row.Height = 28;
+                row.Height = 30;
                 foreach (DataGridViewCell cell in row.Cells)
                     cell.ToolTipText = sequence.Description ?? string.Empty;
-                if (ReferenceEquals(sequence, selectedSequence))
+                if (ReferenceEquals(sequence, preferredSelection))
                     row.Selected = true;
             }
 
+            sequencesHeading.Text = "Sequences · " + sequences.Count;
+            SelectGridSequence();
             UpdateBusyState();
         }
 
         private void SelectGridSequence()
         {
             if (sequenceGrid.SelectedRows.Count == 0)
+            {
+                selectedSequence = null;
+                UpdateSequenceMenuState();
                 return;
+            }
 
             selectedSequence = sequenceGrid.SelectedRows[0].Tag as SequenceDefinition;
+            UpdateSequenceMenuState();
         }
 
         private void SequenceGrid_CellClick(object sender, DataGridViewCellEventArgs e)
@@ -385,8 +476,11 @@ namespace usbrelay
             if (sequenceGrid.Columns[e.ColumnIndex].Name == "RunColumn")
             {
                 var parsed = sequenceParseCache.Get(sequence);
-                if (!parsed.IsValid || parsed.Resources.Any(resource => resourceLocks.IsBusy(resource)))
+                if (!parsed.IsValid || IsSequenceBusy(sequence))
+                {
+                    System.Diagnostics.Trace.WriteLine("[MainForm] Run click rejected: sequence=" + sequence.Name + ", valid=" + parsed.IsValid + ", running or resource busy");
                     return;
+                }
 
                 RunSequence(sequence);
             }
@@ -419,6 +513,12 @@ namespace usbrelay
         {
             if (selectedSequence == null)
                 return;
+            if (IsSequenceBusy(selectedSequence))
+            {
+                System.Diagnostics.Trace.WriteLine("[MainForm] Edit rejected: running or resource-busy sequence=" + selectedSequence.Name);
+                AppendLog("Cannot edit " + selectedSequence.Name + ": sequence is busy");
+                return;
+            }
 
             int index = sequences.IndexOf(selectedSequence);
             using (var form = new SequenceEditorForm(selectedSequence, currentDevices))
@@ -437,6 +537,12 @@ namespace usbrelay
         {
             if (selectedSequence == null)
                 return;
+            if (IsSequenceBusy(selectedSequence))
+            {
+                System.Diagnostics.Trace.WriteLine("[MainForm] Remove rejected: running or resource-busy sequence=" + selectedSequence.Name);
+                AppendLog("Cannot remove " + selectedSequence.Name + ": sequence is busy");
+                return;
+            }
 
             if (!removeSequenceConfirmation(selectedSequence))
                 return;
@@ -470,6 +576,12 @@ namespace usbrelay
                 AppendLog(sequence.Name + " validation failed: " + string.Join("; ", parsed.Diagnostics));
                 return;
             }
+            if (IsSequenceBusy(sequence))
+            {
+                System.Diagnostics.Trace.WriteLine("[MainForm] Run rejected: running or resource-busy sequence=" + sequence.Name);
+                AppendLog(sequence.Name + " waiting: sequence is busy");
+                return;
+            }
 
             string owner = Guid.NewGuid().ToString("N");
             RelayResource[] resources = ResolveResources(parsed.Resources).ToArray();
@@ -479,12 +591,13 @@ namespace usbrelay
                 return;
             }
 
-            UpdateBusyState();
-            AppendLog(sequence.Name + " started");
-            AppendLog("reserved " + string.Join(", ", resources.Select(DescribeResource)));
-
             try
             {
+                runningSequences.Add(sequence);
+                System.Diagnostics.Trace.WriteLine("[MainForm] Sequence running=" + sequence.Name + ", reserved resources=" + resources.Length);
+                UpdateBusyState();
+                AppendLog(sequence.Name + " started");
+                AppendLog("reserved " + string.Join(", ", resources.Select(DescribeResource)));
                 var result = await Task.Run(() => SequenceRunner.Run(
                     parsed,
                     new RelaySequenceBackend(relayService),
@@ -498,7 +611,9 @@ namespace usbrelay
             }
             finally
             {
+                runningSequences.Remove(sequence);
                 resourceLocks.Release(owner);
+                System.Diagnostics.Trace.WriteLine("[MainForm] Sequence completed; released running state and resources=" + sequence.Name);
                 if (!IsDisposed && !Disposing)
                 {
                     AppendLog("released " + sequence.Name);
@@ -539,12 +654,11 @@ namespace usbrelay
                 return;
             }
 
-            devicesPanel.Controls.Clear();
+            RenderDeviceCards();
             statusGrid.Rows.Clear();
 
             foreach (var device in devices)
             {
-                devicesPanel.Controls.Add(CreateDevicePanel(device));
                 int rowIndex = statusGrid.Rows.Add(new object[12]);
                 UpdateStatusRow(statusGrid.Rows[rowIndex], device);
             }
@@ -552,11 +666,49 @@ namespace usbrelay
             if (devices.Count == 0)
             {
                 int rowIndex = statusGrid.Rows.Add("No USB relay devices discovered.");
-                statusGrid.Rows[rowIndex].Cells[0].ToolTipText = "Connect a USB relay device and click Refresh.";
+                statusGrid.Rows[rowIndex].Cells[0].ToolTipText = "Connect a USB relay device, then use Devices > Refresh devices (F5).";
             }
 
             ResizeDeviceRows();
             UpdateBusyState();
+        }
+
+        private void RenderDeviceCards()
+        {
+            devicesPanel.SuspendLayout();
+            try
+            {
+                while (devicesPanel.Controls.Count > 0) devicesPanel.Controls[0].Dispose();
+                foreach (var device in currentDevices) devicesPanel.Controls.Add(CreateDevicePanel(device));
+                devicesHeading.Text = "Devices · " + currentDevices.Count + " connected";
+                if (editNamesMenuItem != null) editNamesMenuItem.Enabled = currentDevices.Count > 0;
+                if (allOffMenuItem != null) allOffMenuItem.Enabled = currentDevices.Count > 0;
+                System.Diagnostics.Trace.WriteLine("[MainForm] Render device cards: count=" + currentDevices.Count + ", dark=" + theme.IsDark);
+            }
+            finally { devicesPanel.ResumeLayout(true); }
+            ResizeDeviceRows();
+        }
+
+        private void PaintSequenceRunButton(object sender, DataGridViewCellPaintingEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex != 1) return;
+            e.PaintBackground(e.ClipBounds, true);
+            var cell = sequenceGrid.Rows[e.RowIndex].Cells[e.ColumnIndex];
+            var bounds = Rectangle.Inflate(e.CellBounds, -5, -4);
+            if (bounds.Width < 5 || bounds.Height < 5) { e.Handled = true; return; }
+            bool hovered = bounds.Contains(sequenceGrid.PointToClient(Cursor.Position));
+            using (var brush = new SolidBrush(hovered && !cell.ReadOnly ? theme.Hover : theme.Surface))
+            using (var pen = new Pen(theme.Border))
+            {
+                e.Graphics.FillRectangle(brush, bounds);
+                e.Graphics.DrawRectangle(pen, bounds);
+            }
+            TextRenderer.DrawText(e.Graphics, Convert.ToString(e.FormattedValue), e.CellStyle.Font, bounds,
+                cell.ReadOnly ? theme.Muted : theme.Foreground,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            if (ReferenceEquals(sequenceGrid.CurrentCell, cell) && sequenceGrid.ContainsFocus)
+                ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(bounds, -2, -2), theme.Foreground, theme.Surface);
+            e.Handled = true;
         }
 
         private void RefreshDeviceStatusTable()
@@ -621,11 +773,12 @@ namespace usbrelay
 
         private Control CreateDevicePanel(RelayDevice device)
         {
-            var group = new GroupBox
+            var group = new RelayCard
             {
-                Text = device.DisplayName + " (" + device.SerialNumber + ") - " + device.Type + " - connected",
+                Text = device.DisplayName + " · " + device.SerialNumber + " · " + device.Type,
                 Width = DeviceRowWidth(),
-                Margin = new Padding(0, 2, 0, 6),
+                Margin = new Padding(0, 0, 0, 10),
+                Padding = new Padding(10, 32, 10, 10),
                 Tag = device.ChannelCount,
                 AccessibleName = "USB relay " + device.SerialNumber + "; device path " + device.DevicePath
             };
@@ -634,20 +787,20 @@ namespace usbrelay
             {
                 Dock = DockStyle.Fill,
                 WrapContents = true,
-                Padding = new Padding(6)
+                Padding = new Padding(0)
             };
 
             for (int channel = 1; channel <= device.ChannelCount; channel++)
             {
                 int capturedChannel = channel;
                 bool on = device.IsChannelOn(channel);
-                var button = new Button
+                var button = new RelayChannelButton(theme, device.GetChannelName(channel), on)
                 {
-                    Text = "● " + device.GetChannelName(channel) + Environment.NewLine + (on ? "ON" : "OFF"),
                     ForeColor = on ? theme.OnForeground : theme.OffForeground,
-                    Width = 64,
-                    Height = 42,
-                    Margin = new Padding(2),
+                    Width = 70,
+                    Height = 64,
+                    Margin = new Padding(0, 0, 6, 6),
+                    AccessibleName = device.DisplayName + ", " + device.GetChannelName(channel) + ", " + (on ? "ON" : "OFF"),
                     Tag = new RelayResource(device.SerialNumber, channel, device.DevicePath)
                 };
                 button.Click += (s, e) => ToggleChannel(device, capturedChannel, !on);
@@ -657,7 +810,10 @@ namespace usbrelay
             group.Controls.Add(channels);
             theme.Apply(group);
             for (int index = 0; index < channels.Controls.Count; index++)
-                channels.Controls[index].ForeColor = device.IsChannelOn(index + 1) ? theme.OnForeground : theme.OffForeground;
+            {
+                channels.Controls[index].ForeColor = device.IsChannelOn(index + 1) ? theme.OnForeground : theme.Muted;
+                channels.Controls[index].BackColor = device.IsChannelOn(index + 1) ? theme.OnBackground : theme.Surface;
+            }
             UpdateDeviceGroupSize(group);
             return group;
         }
@@ -677,10 +833,14 @@ namespace usbrelay
                 return;
 
             int channelCount = (int)row.Tag;
-            int usableWidth = Math.Max(64, row.Width - 24);
-            int perRow = Math.Max(1, usableWidth / 68);
+            int usableWidth = Math.Max(70, row.Width - 20);
+            int cellWidth = Math.Max(64, Math.Min(76, usableWidth / Math.Max(1, channelCount)));
+            int perRow = Math.Max(1, usableWidth / cellWidth);
             int rows = Math.Max(1, (int)Math.Ceiling(channelCount / (double)perRow));
-            row.Height = 38 + (rows * 48);
+            foreach (Control panel in row.Controls)
+                foreach (Control button in panel.Controls)
+                    if (button.Tag is RelayResource) button.Width = cellWidth - 6;
+            row.Height = 42 + (rows * 70);
         }
 
         private int DeviceRowWidth()
@@ -765,7 +925,20 @@ namespace usbrelay
 
         private void AllOff()
         {
-            foreach (var device in relayService.EnumerateDevices())
+            IReadOnlyList<RelayDevice> devices;
+            System.Diagnostics.Trace.WriteLine("[MainForm] All off requested; discovering devices");
+            try
+            {
+                devices = relayService.EnumerateDevices();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.WriteLine("[MainForm] All off discovery failed: " + ex);
+                AppendLog("All off failed: " + ex.Message);
+                return;
+            }
+            System.Diagnostics.Trace.WriteLine("[MainForm] All off discovery complete; devices=" + devices.Count);
+            foreach (var device in devices)
             {
                 for (int channel = 1; channel <= device.ChannelCount; channel++)
                     ToggleChannel(device, channel, false, refreshDevices: false);
@@ -783,7 +956,7 @@ namespace usbrelay
                     continue;
 
                 var parsed = sequenceParseCache.Get(sequence);
-                bool busy = ResolveResources(parsed.Resources).Any(resource => resourceLocks.IsBusy(resource));
+                bool busy = IsSequenceBusy(sequence);
                 var runCell = row.Cells["RunColumn"];
                 runCell.Value = !parsed.IsValid ? "Invalid" : busy ? "Busy" : sequence.DisplayRunButtonText;
                 runCell.ReadOnly = !parsed.IsValid || busy;
@@ -802,6 +975,7 @@ namespace usbrelay
                     }
                 }
             }
+            UpdateSequenceMenuState();
         }
 
         private void LoadLayoutSettings()

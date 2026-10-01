@@ -34,6 +34,7 @@ namespace usbrelay.Tests
             {
                 IntegrationFeatureTests.Run,
                 IntegrationSetupTests.Run,
+                GuiMenuFeatureTests.Run,
                 SequenceRepository_RoundTripsSequencesAsJson,
                 SequenceParser_ParsesDslAndResources,
                 SequenceParser_ParsesNamedDeviceAndChannel,

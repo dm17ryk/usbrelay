@@ -24,10 +24,12 @@ namespace usbrelay.Tests
         public IReadOnlyList<RelayDevice> EnumerateDevices()
         {
             EnumerateDevicesCallCount++;
+            if (EnumerationException != null) throw EnumerationException;
             return devices.Values.Select(CloneWithState).ToList();
         }
 
         public int EnumerateDevicesCallCount { get; private set; }
+        public Exception EnumerationException { get; set; }
 
         public RelayDevice GetDevice(string serialNumber)
         {

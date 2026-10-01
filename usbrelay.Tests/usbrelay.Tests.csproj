@@ -39,6 +39,7 @@
   <ItemGroup>
     <Compile Include="Fakes.cs" />
     <Compile Include="IntegrationFeatureTests.cs" />
+    <Compile Include="GuiMenuFeatureTests.cs" />
     <Compile Include="IntegrationSetupTests.cs" />
     <Compile Include="Program.cs" />
   </ItemGroup>
