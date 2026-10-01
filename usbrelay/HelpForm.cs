@@ -78,7 +78,7 @@ namespace usbrelay
                 + "NAMES\r\nUse Devices > Edit names to name boards and channels. Names are saved by the unique device path, so boards with the same serial number stay separate.\r\n\r\n"
                 + "SEQUENCES\r\nUse Sequences > Add sequence (Ctrl+N) to create a script. Select a row, then use Edit sequence (Ctrl+E) or Remove sequence. Click a row's Run button to execute it; results appear in Sequence log. Invalid or busy sequences cannot run.\r\n\r\n"
                 + "APPEARANCE AND AI TOOLS\r\nChoose View > Theme > Dark or Light. Use Tools > AI tools and MCP setup to preview or install MCP registration and skills for Codex, Claude Code, Cursor, and VS Code.\r\n\r\n"
-                + "COMMAND LINE\r\nusbrelay --help\r\nusbrelay --list\r\nusbrelay --status\r\nusbrelay sequence functions\r\nusbrelay integration install --dry-run\r\n\r\nPress F1 to reopen this guide. Help > About shows the version and project link.";
+                + "COMMAND LINE\r\nusbrelay --help\r\nusbrelay --list\r\nusbrelay --status\r\nusbrelay sequence functions\r\nusbrelay integration install --dry-run\r\n\r\nPress F1 in the main window to open this guide. Help > About shows the version and project link.";
             layout.Controls.Add(help, 0, 1);
             var close = new Button { Text = "Close", DialogResult = DialogResult.OK, Size = new Size(90, 30), Anchor = AnchorStyles.Right };
             layout.Controls.Add(close, 0, 2);

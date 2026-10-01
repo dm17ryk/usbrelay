@@ -15,7 +15,9 @@ namespace usbrelay.Tests
             var tests = new Action[] { MainMenusRouteOperationalActions, SequenceMenusRespectSelectionAndCancellation,
                 ThemeMenuPersistsWithoutRediscovery, MenuRendererUpdatesNestedMenus, DialogsShowHelpVersionAndKeyboardClose,
                 MenuActionsOpenAuxiliaryDialogs, PaletteKeepsTextReadable, ReapplyingThemeKeepsComboMetadata,
-                SelectedStatusTextStaysReadable, StartupSelectionEnablesMenus };
+                SelectedStatusTextStaysReadable, StartupSelectionEnablesMenus,
+                RunningSequenceDisablesMaintenanceMenus, ResourceFreeSequenceDisablesMaintenanceMenus,
+                AllOffDiscoveryFailureKeepsWindowAndRelayState };
             foreach (Action test in tests) { test(); Console.WriteLine("PASS " + test.Method.Name); }
         }
 
@@ -80,6 +82,79 @@ namespace usbrelay.Tests
                 Descendants(form).OfType<DataGridView>().Single(control => control.AccessibleName == "Saved sequences").Rows[0].Selected = true;
                 Item(form, "removeSequenceMenuItem").PerformClick();
                 Check(repository.Load().Count == 0 && !Item(form, "removeSequenceMenuItem").Enabled, "Confirmed removal must persist and disable edit/remove");
+            }
+        }
+
+        private static void RunningSequenceDisablesMaintenanceMenus()
+        {
+            CheckRunningSequenceMenus("sequence.PowerOn(\"BUSY-MENU\", 1);\r\nsequence.Sleep(500);\r\nsequence.PowerOff(\"BUSY-MENU\", 1);");
+        }
+
+        private static void ResourceFreeSequenceDisablesMaintenanceMenus()
+        {
+            CheckRunningSequenceMenus("sequence.Sleep(500);");
+        }
+
+        private static void CheckRunningSequenceMenus(string script)
+        {
+            var parsed = SequenceParser.Parse(script);
+            Check(parsed.IsValid, "Test sequence must be valid: " + string.Join("; ", parsed.Diagnostics));
+            var repository = new SequenceRepository(TempPath("sequences.json"));
+            repository.Save(new[] { new SequenceDefinition { Name = "Running", Script = script },
+                new SequenceDefinition { Name = "Independent", Script = "sequence.Sleep(0);" } });
+            int confirmations = 0;
+            using (var form = CreateForm(new FakeRelayBackend(new RelayDevice("BUSY-MENU", RelayDeviceType.TwoChannel, 2, 0)),
+                repository, sequence => { confirmations++; return true; }))
+            {
+                IntPtr handle = form.Handle;
+                form.PrepareForDisplay();
+                var grid = Descendants(form).OfType<DataGridView>().Single(control => control.AccessibleName == "Saved sequences");
+                grid.Rows[0].Selected = true;
+                typeof(MainForm).GetMethod("SequenceGrid_CellClick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                    .Invoke(form, new object[] { grid, new DataGridViewCellEventArgs(grid.Columns["RunColumn"].Index, 0) });
+                Check(!Item(form, "editSequenceMenuItem").Enabled && !Item(form, "removeSequenceMenuItem").Enabled,
+                    "Running sequence must disable Edit and Remove immediately, including scripts without relay resources");
+                typeof(MainForm).GetMethod("SequenceGrid_CellClick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                    .Invoke(form, new object[] { grid, new DataGridViewCellEventArgs(grid.Columns["RunColumn"].Index, 0) });
+                typeof(MainForm).GetMethod("RunSequence", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                    .Invoke(form, new object[] { (SequenceDefinition)grid.Rows[0].Tag });
+                Check(Descendants(form).OfType<TextBox>().Single(control => control.AccessibleName == "Sequence log").Text
+                    .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Count(line => line.EndsWith("Running started", StringComparison.Ordinal)) == 1,
+                    "Repeated Run clicks and direct calls must execute an active sequence only once");
+                typeof(MainForm).GetMethod("RemoveSequence", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).Invoke(form, null);
+                Check(confirmations == 0 && repository.Load().Count == 2, "Direct removal must also reject a running sequence before confirmation");
+                grid.Rows[1].Selected = true;
+                Check(Item(form, "editSequenceMenuItem").Enabled && Item(form, "removeSequenceMenuItem").Enabled,
+                    "An independent idle sequence must remain editable");
+                grid.Rows[0].Selected = true;
+                Check(!Item(form, "editSequenceMenuItem").Enabled, "Reselecting the running sequence must keep Edit disabled");
+                var timeout = System.Diagnostics.Stopwatch.StartNew();
+                while (grid.Rows[0].Cells["RunColumn"].ReadOnly && timeout.ElapsedMilliseconds < 5000)
+                {
+                    Application.DoEvents();
+                    System.Threading.Thread.Sleep(10);
+                }
+                Check(!grid.Rows[0].Cells["RunColumn"].ReadOnly && Item(form, "editSequenceMenuItem").Enabled && Item(form, "removeSequenceMenuItem").Enabled,
+                    "Completion must restore Run, Edit, and Remove automatically");
+            }
+        }
+
+        private static void AllOffDiscoveryFailureKeepsWindowAndRelayState()
+        {
+            var backend = new FakeRelayBackend(new RelayDevice("ALL-OFF-FAIL", RelayDeviceType.TwoChannel, 2, 3));
+            using (var form = CreateForm(backend))
+            {
+                form.PrepareForDisplay();
+                int calls = backend.EnumerateDevicesCallCount;
+                backend.EnumerationException = new InvalidOperationException("native discovery failed");
+                Item(form, "allOffMenuItem").PerformClick();
+                Check(backend.EnumerateDevicesCallCount == calls + 1 && backend.GetDevice("ALL-OFF-FAIL").StatusMask == 3,
+                    "Failed discovery must avoid channel changes and extra rediscovery");
+                Check(Descendants(form).OfType<TextBox>().Single(control => control.AccessibleName == "Sequence log").Text.Contains("All off failed: native discovery failed"),
+                    "All Off discovery failure must be visible in the GUI log");
+                backend.EnumerationException = null;
+                Item(form, "allOffMenuItem").PerformClick();
+                Check(backend.GetDevice("ALL-OFF-FAIL").StatusMask == 0, "All Off must still work after discovery recovers");
             }
         }
 

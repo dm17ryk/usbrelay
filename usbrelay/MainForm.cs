@@ -29,6 +29,7 @@ namespace usbrelay
         private readonly SequenceResourceLocks resourceLocks = new SequenceResourceLocks();
         private readonly SequenceParseCache sequenceParseCache = new SequenceParseCache();
         private readonly List<SequenceDefinition> sequences = new List<SequenceDefinition>();
+        private readonly HashSet<SequenceDefinition> runningSequences = new HashSet<SequenceDefinition>();
         private IReadOnlyList<RelayDevice> currentDevices = new RelayDevice[0];
 
         private DataGridView sequenceGrid;
@@ -206,9 +207,16 @@ namespace usbrelay
         private void UpdateSequenceMenuState()
         {
             bool selected = selectedSequence != null;
-            if (editSequenceMenuItem != null) editSequenceMenuItem.Enabled = selected;
-            if (removeSequenceMenuItem != null) removeSequenceMenuItem.Enabled = selected;
-            System.Diagnostics.Trace.WriteLine("[MainForm] Sequence menu selection=" + (selectedSequence?.Name ?? "none") + ", edit/remove enabled=" + selected);
+            bool busy = selected && IsSequenceBusy(selectedSequence);
+            bool enabled = selected && !busy;
+            if (editSequenceMenuItem != null) editSequenceMenuItem.Enabled = enabled;
+            if (removeSequenceMenuItem != null) removeSequenceMenuItem.Enabled = enabled;
+            System.Diagnostics.Trace.WriteLine("[MainForm] Sequence menu selection=" + (selectedSequence?.Name ?? "none") + ", busy=" + busy + ", edit/remove enabled=" + enabled);
+        }
+
+        private bool IsSequenceBusy(SequenceDefinition sequence)
+        {
+            return runningSequences.Contains(sequence) || ResolveResources(sequenceParseCache.Get(sequence).Resources).Any(resource => resourceLocks.IsBusy(resource));
         }
 
         private void UpdateThemeMenuState()
@@ -468,8 +476,11 @@ namespace usbrelay
             if (sequenceGrid.Columns[e.ColumnIndex].Name == "RunColumn")
             {
                 var parsed = sequenceParseCache.Get(sequence);
-                if (!parsed.IsValid || parsed.Resources.Any(resource => resourceLocks.IsBusy(resource)))
+                if (!parsed.IsValid || IsSequenceBusy(sequence))
+                {
+                    System.Diagnostics.Trace.WriteLine("[MainForm] Run click rejected: sequence=" + sequence.Name + ", valid=" + parsed.IsValid + ", running or resource busy");
                     return;
+                }
 
                 RunSequence(sequence);
             }
@@ -502,6 +513,12 @@ namespace usbrelay
         {
             if (selectedSequence == null)
                 return;
+            if (IsSequenceBusy(selectedSequence))
+            {
+                System.Diagnostics.Trace.WriteLine("[MainForm] Edit rejected: running or resource-busy sequence=" + selectedSequence.Name);
+                AppendLog("Cannot edit " + selectedSequence.Name + ": sequence is busy");
+                return;
+            }
 
             int index = sequences.IndexOf(selectedSequence);
             using (var form = new SequenceEditorForm(selectedSequence, currentDevices))
@@ -520,6 +537,12 @@ namespace usbrelay
         {
             if (selectedSequence == null)
                 return;
+            if (IsSequenceBusy(selectedSequence))
+            {
+                System.Diagnostics.Trace.WriteLine("[MainForm] Remove rejected: running or resource-busy sequence=" + selectedSequence.Name);
+                AppendLog("Cannot remove " + selectedSequence.Name + ": sequence is busy");
+                return;
+            }
 
             if (!removeSequenceConfirmation(selectedSequence))
                 return;
@@ -553,6 +576,12 @@ namespace usbrelay
                 AppendLog(sequence.Name + " validation failed: " + string.Join("; ", parsed.Diagnostics));
                 return;
             }
+            if (IsSequenceBusy(sequence))
+            {
+                System.Diagnostics.Trace.WriteLine("[MainForm] Run rejected: running or resource-busy sequence=" + sequence.Name);
+                AppendLog(sequence.Name + " waiting: sequence is busy");
+                return;
+            }
 
             string owner = Guid.NewGuid().ToString("N");
             RelayResource[] resources = ResolveResources(parsed.Resources).ToArray();
@@ -562,12 +591,13 @@ namespace usbrelay
                 return;
             }
 
-            UpdateBusyState();
-            AppendLog(sequence.Name + " started");
-            AppendLog("reserved " + string.Join(", ", resources.Select(DescribeResource)));
-
             try
             {
+                runningSequences.Add(sequence);
+                System.Diagnostics.Trace.WriteLine("[MainForm] Sequence running=" + sequence.Name + ", reserved resources=" + resources.Length);
+                UpdateBusyState();
+                AppendLog(sequence.Name + " started");
+                AppendLog("reserved " + string.Join(", ", resources.Select(DescribeResource)));
                 var result = await Task.Run(() => SequenceRunner.Run(
                     parsed,
                     new RelaySequenceBackend(relayService),
@@ -581,7 +611,9 @@ namespace usbrelay
             }
             finally
             {
+                runningSequences.Remove(sequence);
                 resourceLocks.Release(owner);
+                System.Diagnostics.Trace.WriteLine("[MainForm] Sequence completed; released running state and resources=" + sequence.Name);
                 if (!IsDisposed && !Disposing)
                 {
                     AppendLog("released " + sequence.Name);
@@ -893,7 +925,20 @@ namespace usbrelay
 
         private void AllOff()
         {
-            foreach (var device in relayService.EnumerateDevices())
+            IReadOnlyList<RelayDevice> devices;
+            System.Diagnostics.Trace.WriteLine("[MainForm] All off requested; discovering devices");
+            try
+            {
+                devices = relayService.EnumerateDevices();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.WriteLine("[MainForm] All off discovery failed: " + ex);
+                AppendLog("All off failed: " + ex.Message);
+                return;
+            }
+            System.Diagnostics.Trace.WriteLine("[MainForm] All off discovery complete; devices=" + devices.Count);
+            foreach (var device in devices)
             {
                 for (int channel = 1; channel <= device.ChannelCount; channel++)
                     ToggleChannel(device, channel, false, refreshDevices: false);
@@ -911,7 +956,7 @@ namespace usbrelay
                     continue;
 
                 var parsed = sequenceParseCache.Get(sequence);
-                bool busy = ResolveResources(parsed.Resources).Any(resource => resourceLocks.IsBusy(resource));
+                bool busy = IsSequenceBusy(sequence);
                 var runCell = row.Cells["RunColumn"];
                 runCell.Value = !parsed.IsValid ? "Invalid" : busy ? "Busy" : sequence.DisplayRunButtonText;
                 runCell.ReadOnly = !parsed.IsValid || busy;
@@ -930,6 +975,7 @@ namespace usbrelay
                     }
                 }
             }
+            UpdateSequenceMenuState();
         }
 
         private void LoadLayoutSettings()
