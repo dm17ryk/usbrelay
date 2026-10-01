@@ -32,6 +32,8 @@ namespace usbrelay.Tests
 
             var tests = new Action[]
             {
+                IntegrationFeatureTests.Run,
+                IntegrationSetupTests.Run,
                 SequenceRepository_RoundTripsSequencesAsJson,
                 SequenceParser_ParsesDslAndResources,
                 SequenceParser_ParsesNamedDeviceAndChannel,

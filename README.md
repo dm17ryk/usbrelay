@@ -99,6 +99,180 @@ Current version is implemented in C# (VS2019). Porting to other platforms should
 
 # help
 
+## GUI themes and command-line coverage
+
+The GUI starts with a dark theme. Use the **Theme** selector to switch between
+Dark and Light; the preference is saved in `%APPDATA%\usbrelay\theme.json`.
+The main window, device naming dialog, sequence editor, syntax highlighting,
+completion popup and status tables use the selected theme. ON/OFF text remains
+visible alongside status colors. Theme changes apply immediately in the main
+window; reopen an already open window after changing the preference externally.
+
+Every operational GUI action has a CLI equivalent:
+
+| GUI action | CLI equivalent |
+| --- | --- |
+| Refresh devices and channel status | `usbrelay --list`, `usbrelay --status` |
+| Switch one channel | `usbrelay --device-name "DUT power" --on 1` / `--off 1` |
+| Switch a named channel | `usbrelay --device-name "DUT power" --on-name "Main relay"` |
+| All Off on every board | `usbrelay --all-off` |
+| Edit device/channel names | `--set-device-name`, `--set-channel-name` with a device selector |
+| Clear a device name | `usbrelay --device-path "<path>" --set-device-name ""` |
+| Clear a channel name | `usbrelay --device-path "<path>" --set-channel-name 1 ""` |
+| Add/edit/remove saved sequence | `sequence add`, `sequence modify`, `sequence remove --name "Name"` |
+| Read sequence metadata and script | `sequence read --name "Name"` |
+| Validate syntax and resources | `sequence status --name "Name"` |
+| Run sequence and read logs | `sequence run --name "Name"` |
+| Discover script functions | `sequence functions` |
+| Query/set GUI theme | `theme query`, `theme dark`, `theme light` |
+| Register MCP and create AI tool skills | `integration install --client <client>` |
+
+Sequence scripts and all metadata (name, run-button text, description) are
+editable through CLI. Window sizing and interactive editor completion remain
+presentation features. CLI confirmations auto-accept; MCP runs can choose the
+Confirm result using `confirm`. All Off attempts every channel, reports any
+failures and exits nonzero when at least one operation fails.
+
+## MCP server
+
+### Automatic client setup and skills
+
+Open **AI tools** in the GUI, select your clients, then use **Preview** or
+**Install**. Both the MCP registration and the `usb-relay` skill are installed
+for the current Windows user. The same setup is available from the CLI:
+
+```powershell
+# Register MCP and generate skills for detected clients:
+usbrelay integration install
+# Explicitly select clients, even before installing their applications:
+usbrelay integration install --client codex claude-code cursor vscode
+# Preview without writing files:
+usbrelay integration status --client codex claude-code
+usbrelay integration install --client all --dry-run
+# Configure a specific project instead of the Windows user:
+usbrelay integration install --client codex claude-code --scope project --project "D:\Projects\My project"
+# MCP only, or generate a standalone skill for another compatible tool:
+usbrelay integration install --client cursor --no-skill
+usbrelay integration skill --output "D:\My skills\usb-relay"
+```
+
+Run setup from the installed or permanent portable executable: the registration
+and skill store its absolute path. Setup does not install the client application
+or require its CLI to be present. `detected` checks client configuration folders
+and commands on PATH; `all` targets all four supported clients.
+
+| Client | User MCP configuration | User skill directory | Project MCP configuration |
+| --- | --- | --- | --- |
+| Codex (CLI and desktop) | `~/.codex/config.toml` or `$CODEX_HOME/config.toml` | `~/.agents/skills/usb-relay` | `.codex/config.toml` |
+| Claude Code | `~/.claude.json` or `$CLAUDE_CONFIG_DIR/.claude.json` | `~/.claude/skills/usb-relay` or `$CLAUDE_CONFIG_DIR/skills/usb-relay` | `.mcp.json` |
+| Cursor | `~/.cursor/mcp.json` | `~/.agents/skills/usb-relay` | `.cursor/mcp.json` |
+| VS Code / Copilot Chat (default profile) | `%APPDATA%/Code/User/mcp.json` | `~/.copilot/skills/usb-relay` | `.vscode/mcp.json` |
+
+Project skills use `.agents/skills/usb-relay` for Codex and Cursor,
+`.claude/skills/usb-relay` for Claude Code, and `.github/skills/usb-relay` for
+VS Code. VS Code portable mode honors `VSCODE_PORTABLE`. `--home <directory>`
+generates an isolated user layout there and ignores current client environment
+overrides; it is useful for staging or testing configuration.
+
+Existing settings and other MCP servers are retained. Changed files get exact
+backups named `*.usbrelay-<timestamp>-<id>.bak`; JSON/JSONC is normalized to JSON
+when changed (comments are retained in the backup), and TOML is serialized with
+comment metadata. Matching registrations are left untouched. Setup validates
+all selected configurations before writing and rejects malformed files. It
+detects edits made between planning and writing. An I/O failure can leave earlier
+files installed; the log identifies saved files and backups so setup can be
+rerun after resolving the error.
+
+Customized skills and an existing `usbrelay` entry launching another application
+are preserved unless you specify `--force`. A checksum allows an unmodified
+generated skill to be updated when the executable moves or the tool list changes.
+The generated skill includes the current MCP tool catalog, device discovery,
+handling duplicate serials, sequence inspection, explicit confirmation behavior,
+and CLI fallback instructions. Other Agent Skills compatible clients can load
+the standalone generated directory.
+
+Restart clients after setup. Project configuration may require workspace trust;
+client-managed policies and approvals still apply. For VS Code custom profiles
+use its MCP configuration editor or import the generated entry into that profile.
+Client conventions are documented in
+[Codex MCP](https://developers.openai.com/codex/mcp),
+[Codex skills](https://developers.openai.com/codex/skills),
+[Claude Code MCP](https://code.claude.com/docs/en/mcp),
+[Claude Code skills](https://code.claude.com/docs/en/skills),
+[Cursor MCP](https://cursor.com/docs/context/mcp),
+[Cursor skills](https://cursor.com/docs/skills), and
+[VS Code MCP](https://code.visualstudio.com/docs/copilot/customization/mcp-servers).
+
+### Manual setup for other MCP clients
+
+The same standalone executable contains a local MCP server using the official
+C# MCP SDK. No Python, Node.js, additional daemon or network listener is needed.
+An MCP host launches `usbrelay.exe mcp` and communicates using standard UTF-8
+JSON-RPC over stdin/stdout. Debug and hardware logs go to stderr.
+
+For clients accepting the common `mcpServers` JSON format, generate a config
+with the exact path to the executable you built or installed:
+
+```powershell
+.\build.ps1 -Configuration Release
+.\scripts\Get-McpConfig.ps1 -CommandPath .\usbrelay\bin\Release\usbrelay.exe
+# Optionally write a config snippet for your client:
+.\scripts\Get-McpConfig.ps1 -CommandPath .\usbrelay\bin\Release\usbrelay.exe -OutputPath .\usbrelay-mcp.json
+```
+
+The resulting configuration has this shape (replace the executable path with
+your own). Merge its `usbrelay` entry into your client's existing configuration:
+
+```json
+{
+  "mcpServers": {
+    "usbrelay": {
+      "command": "D:\\Essence_SC\\lsrc\\usbrelay\\usbrelay\\bin\\Release\\usbrelay.exe",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Clients using TOML can use the equivalent stdio server entry:
+
+```toml
+[mcp_servers.usbrelay]
+command = 'D:\Essence_SC\lsrc\usbrelay\usbrelay\bin\Release\usbrelay.exe'
+args = ["mcp"]
+```
+
+| MCP tool | Purpose |
+| --- | --- |
+| `relay_list` | Discover devices, unique HID paths, names and channel states |
+| `relay_set_channel` | Set one channel ON/OFF by number or friendly name |
+| `relay_all_off` | Turn off every channel on every connected board |
+| `relay_update_names` | Set or clear saved device/channel names |
+| `sequence_list`, `sequence_read` | Inspect saved sequence metadata, validity and scripts |
+| `sequence_add`, `sequence_modify`, `sequence_remove` | Manage saved sequences |
+| `sequence_status` | Check syntax and hardware resource availability |
+| `sequence_run` | Execute saved script and return its logs; `confirm` defaults to true |
+| `sequence_functions` | Read supported sequence functions and control flow |
+| `gui_theme` | Query or save `dark`/`light` preference |
+
+For example, call `relay_list`, then `relay_set_channel` with arguments
+`{"device":"DUT power","channel":"Main relay","on":true}`. Use the full
+device path when serials or friendly selectors are ambiguous.
+`relay_update_names` accepts `{"device":"<path>","name":"DUT power","channels":{"1":"Main relay","2":"Debug"}}`;
+an empty string clears a name. `sequence_run` takes `{"name":"Power cycle DUT"}`
+or `{"name":"Power cycle DUT","confirm":false}` to follow a script's Cancel
+branch. Tools return both text JSON and structured content; operational failures
+are returned with `isError: true` and useful diagnostics.
+
+MCP operations are serialized within one server process to keep sequence runs
+from racing relay switches or repository edits. The SDK handles protocol
+initialization, tool discovery, ping and cancellation. Cancelling a sequence
+interrupts delays, polling and a currently running external program and skips
+later steps; already completed relay changes are preserved. Each server runs
+under its client's Windows user account and shares that account's saved GUI/CLI
+configuration. Refresh/reopen GUI views after changing saved data externally.
+Separate GUI, CLI and MCP processes do not share execution locks.
+
 ```
 Description:
   A simple utility to control, list, and query USB-Relay devices.
@@ -159,6 +333,7 @@ usbrelay sequence query --name "Power cycle DUT"
 usbrelay sequence read --name "Power cycle DUT"
 usbrelay sequence add --name "Power cycle DUT" --script-file .\power-cycle.sequence --run-button "Power cycle"
 usbrelay sequence modify --name "Power cycle DUT" --new-name "Power cycle DUT v2" --script-file .\power-cycle-v2.sequence
+usbrelay sequence remove --name "Power cycle DUT v2"
 usbrelay sequence status
 usbrelay sequence status --name "Power cycle DUT"
 usbrelay sequence run --name "Power cycle DUT"

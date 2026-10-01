@@ -14,6 +14,12 @@ namespace usbrelay
             if (IsSequenceRequest(args))
                 return RunSequenceCommand(args);
 
+            if (args.Length > 0 && args[0] == "integration")
+                return InvokeSystemCommandLine(args);
+
+            if (args.Length > 0 && (args[0] == "mcp" || args[0] == "theme"))
+                return RunIntegrationCommand(args);
+
             if (args.Length < 1)
             {
                 PrintHelpWithExamples();
@@ -54,6 +60,17 @@ namespace usbrelay
                         new HashSet<string>(command.OffChannelNames, StringComparer.OrdinalIgnoreCase));
                 case Operations.NAMES:
                     return control.update_names(command.SetDeviceName, command.SetChannelNamePairs.ToArray());
+                case Operations.ALLOFF:
+                    try
+                    {
+                        var service = new RelayService(new NativeUsbRelayBackend());
+                        return service.AllOff(Console.WriteLine).Count == 0 ? 0 : 1;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine("All Off failed: " + ex.Message);
+                        return 1;
+                    }
             }
 
             return 0;
@@ -98,7 +115,10 @@ namespace usbrelay
                 offChannelNames = CombineNames(parseResult.GetValue(grammar.OffNameOption));
 
                 bool updateNames = setDeviceName != null || setChannelNamePairs.Length > 0;
-                if (list)
+                bool allOff = parseResult.GetValue(grammar.AllOffOption);
+                if (allOff)
+                    operation = Operations.ALLOFF;
+                else if (list)
                     operation = Operations.LIST;
                 else if (status)
                     operation = Operations.STATUS;
@@ -107,10 +127,12 @@ namespace usbrelay
                 else if (onChannels.Length > 0 || onChannelNames.Length > 0 || offChannels.Length > 0 || offChannelNames.Length > 0)
                     operation = Operations.ONOFF;
 
-                bool hasRelayOptions = list || status || !string.IsNullOrEmpty(serial) || !string.IsNullOrEmpty(devicePath) || !string.IsNullOrEmpty(deviceName)
+                bool hasRelayOptions = allOff || list || status || !string.IsNullOrEmpty(serial) || !string.IsNullOrEmpty(devicePath) || !string.IsNullOrEmpty(deviceName)
                     || setDeviceName != null || setChannelNamePairs.Length > 0
                     || onChannels.Length > 0 || onChannelNames.Length > 0 || offChannels.Length > 0 || offChannelNames.Length > 0;
                 int selectorCount = new[] { serial, devicePath, deviceName }.Count(value => !string.IsNullOrEmpty(value));
+                if (allOff && (list || status || selectorCount > 0 || updateNames || onChannels.Length > 0 || onChannelNames.Length > 0 || offChannels.Length > 0 || offChannelNames.Length > 0))
+                    errors.Add("--all-off operates on all boards and cannot be combined with other relay options.");
                 if (selectorCount > 1)
                     errors.Add("Use only one of --serial, --device-path, or --device-name.");
                 if (updateNames && selectorCount == 0)
@@ -151,6 +173,39 @@ namespace usbrelay
             return args.Length > 0 && string.Equals(args[0], "complete", StringComparison.OrdinalIgnoreCase);
         }
 
+        private static int RunIntegrationCommand(string[] args)
+        {
+            if (args.Any(IsHelpArgument)) return InvokeSystemCommandLine(args);
+            var parsed = CliGrammar.Current.RootCommand.Parse(args);
+            if (parsed.Errors.Count > 0)
+            {
+                foreach (var error in parsed.Errors) Console.Error.WriteLine(error.Message);
+                return 1;
+            }
+            try
+            {
+                if (args[0] == "mcp") return UsbRelayMcpServer.Run();
+                string name = parsed.CommandResult.Command.Name;
+                if (name == "theme")
+                {
+                    Console.Error.WriteLine("Usage: usbrelay theme <query|dark|light>");
+                    return 1;
+                }
+                if (name == "query") Console.WriteLine(ThemeSettings.Load(ThemeSettings.DefaultPath).Theme);
+                else
+                {
+                    new ThemeSettings { Theme = name }.Save(ThemeSettings.DefaultPath);
+                    Console.WriteLine("Saved GUI theme: " + name);
+                }
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("[usbrelay] " + args[0] + " failed: " + ex);
+                return 1;
+            }
+        }
+
         private static bool IsSequenceRequest(string[] args)
         {
             return args.Length > 0 && string.Equals(args[0], "sequence", StringComparison.OrdinalIgnoreCase);
@@ -184,6 +239,9 @@ namespace usbrelay
                 string name = parseResult.GetValue(grammar.SequenceReadNameOption);
                 return sequences.Read(name, ShouldWriteInteractiveSequenceSeparator(commandName, Console.IsOutputRedirected));
             }
+
+            if (ReferenceEquals(command, grammar.SequenceRemoveCommand))
+                return sequences.Remove(parseResult.GetValue(grammar.SequenceRemoveNameOption));
 
             if (ReferenceEquals(command, grammar.SequenceAddCommand))
             {
@@ -223,7 +281,7 @@ namespace usbrelay
                 return sequences.Run(name, ShouldWriteInteractiveSequenceSeparator(commandName, Console.IsOutputRedirected));
             }
 
-            Console.Error.WriteLine("Usage: usbrelay sequence <query|read|add|modify|status|run|functions> [options]");
+            Console.Error.WriteLine("Usage: usbrelay sequence <query|read|add|modify|remove|status|run|functions> [options]");
             return 1;
         }
 
@@ -264,6 +322,11 @@ namespace usbrelay
             Console.WriteLine("Examples:");
             Console.WriteLine("  usbrelay --list");
             Console.WriteLine("  usbrelay --status");
+            Console.WriteLine("  usbrelay --all-off");
+            Console.WriteLine("  usbrelay theme dark");
+            Console.WriteLine("  usbrelay mcp");
+            Console.WriteLine("  usbrelay integration install --client codex claude-code");
+            Console.WriteLine("  usbrelay sequence remove --name \"Power cycle DUT\"");
             Console.WriteLine("  usbrelay --serial BITFT --on 1");
             Console.WriteLine("  usbrelay --device-path \"<path from --list>\" --on 1");
             Console.WriteLine("  usbrelay --device-name \"DUT power\" --on-name \"Main relay\"");

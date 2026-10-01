@@ -6,6 +6,7 @@ namespace usbrelay
         LIST,
         STATUS,
         ONOFF,
-        NAMES
+        NAMES,
+        ALLOFF
     }
 }

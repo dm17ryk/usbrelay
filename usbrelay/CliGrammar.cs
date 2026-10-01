@@ -101,6 +101,9 @@ namespace usbrelay
         public static CliGrammar Current { get { return Cached.Value; } }
 
         public RootCommand RootCommand { get; private set; }
+        public Option<bool> AllOffOption { get; private set; }
+        public Command SequenceRemoveCommand { get; private set; }
+        public Option<string> SequenceRemoveNameOption { get; private set; }
         public Option<bool> ListOption { get; private set; }
         public Option<bool> LegacyListOption { get; private set; }
         public Option<bool> StatusOption { get; private set; }
@@ -266,7 +269,26 @@ namespace usbrelay
             rootCommand.Subcommands.Add(completionCommand);
             rootCommand.SetAction(parseResult => 0);
 
-            return new CliGrammar(
+            var allOffOption = CreateBoolOption("--all-off", "Turn off every channel on every connected relay board.");
+            rootCommand.Options.Add(allOffOption);
+            var removeNameOption = new Option<string>("--name") { Required = true, Description = "Saved sequence name to remove." };
+            var removeCommand = new Command("remove", "Remove one saved sequence.") { Options = { removeNameOption } };
+            removeCommand.SetAction(parseResult => 0);
+            sequenceCommand.Subcommands.Add(removeCommand);
+            var themeCommand = new Command("theme", "Query or set the saved GUI theme.");
+            foreach (string name in new[] { "query", "dark", "light" })
+            {
+                var subcommand = new Command(name, name == "query" ? "Show the saved theme." : "Save the " + name + " theme.");
+                subcommand.SetAction(parseResult => 0);
+                themeCommand.Subcommands.Add(subcommand);
+            }
+            rootCommand.Subcommands.Add(themeCommand);
+            var mcpCommand = new Command("mcp", "Start the local MCP server using stdin/stdout.");
+            mcpCommand.SetAction(parseResult => 0);
+            rootCommand.Subcommands.Add(mcpCommand);
+            rootCommand.Subcommands.Add(IntegrationCommand.Create());
+
+            var grammar = new CliGrammar(
                 rootCommand,
                 listOption,
                 legacyListOption,
@@ -309,6 +331,10 @@ namespace usbrelay
                 sequenceModifyScriptFileOption,
                 sequenceModifyRunButtonOption,
                 sequenceModifyDescriptionOption);
+            grammar.AllOffOption = allOffOption;
+            grammar.SequenceRemoveCommand = removeCommand;
+            grammar.SequenceRemoveNameOption = removeNameOption;
+            return grammar;
         }
 
         private static Option<bool> CreateBoolOption(string name, string description)

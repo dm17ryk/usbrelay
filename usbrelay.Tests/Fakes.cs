@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using usbrelay.Sequences;
@@ -8,7 +9,7 @@ namespace usbrelay.Tests
     internal sealed class FakeRelayBackend : IRelayBackend, ISequenceRelayBackend
     {
         private readonly Dictionary<string, RelayDevice> devices;
-        private readonly Dictionary<RelayResource, bool> states = new Dictionary<RelayResource, bool>();
+        private readonly ConcurrentDictionary<RelayResource, bool> states = new ConcurrentDictionary<RelayResource, bool>();
 
         public FakeRelayBackend(params RelayDevice[] devices)
         {

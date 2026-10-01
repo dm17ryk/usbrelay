@@ -134,6 +134,7 @@ Copy-Item -LiteralPath (Join-Path $repoRoot "README.md") -Destination $portableR
 $portableScripts = Join-Path $portableRoot "scripts"
 New-Item -ItemType Directory -Path $portableScripts -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $repoRoot "scripts\usbrelay-completion.ps1") -Destination $portableScripts -Force
+Copy-Item -LiteralPath (Join-Path $repoRoot "scripts\Get-McpConfig.ps1") -Destination $portableScripts -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot "scripts\clink") -Destination $portableScripts -Recurse -Force
 
 $zipPath = Join-Path $outputDirectoryPath "usbrelay-v$version.zip"
