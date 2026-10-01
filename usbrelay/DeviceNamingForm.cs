@@ -8,6 +8,7 @@ namespace usbrelay
 {
     public sealed class DeviceNamingForm : Form
     {
+        private readonly GuiTheme theme = new GuiTheme(ThemeSettings.Load(ThemeSettings.DefaultPath).Theme);
         private readonly IReadOnlyList<RelayDevice> devices;
         private readonly RelayNamingRepository repository;
         private readonly RelayNamingConfiguration configuration;
@@ -25,6 +26,8 @@ namespace usbrelay
             this.repository = repository;
             configuration = repository.Load();
             InitializeComponent();
+            theme.Apply(this);
+            HandleCreated += (s, e) => theme.ApplyTitleBar(this);
         }
 
         private void InitializeComponent()
@@ -133,6 +136,7 @@ namespace usbrelay
             }
             finally
             {
+                theme.Apply(channelLayout);
                 loading = false;
                 loadedDevice = selectedDevice;
             }

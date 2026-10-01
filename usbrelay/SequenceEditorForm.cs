@@ -15,6 +15,7 @@ namespace usbrelay
 {
     public sealed class SequenceEditorForm : Form
     {
+        private readonly GuiTheme theme = new GuiTheme(ThemeSettings.Load(ThemeSettings.DefaultPath).Theme);
         private readonly TextBox nameTextBox = new TextBox();
         private readonly TextBox runButtonTextBox = new TextBox();
         private readonly TextBox descriptionTextBox = new TextBox();
@@ -45,6 +46,9 @@ namespace usbrelay
             this.layoutSettingsPath = layoutSettingsPath;
             this.connectedDevices = (connectedDevices ?? Enumerable.Empty<RelayDevice>()).ToArray();
             InitializeComponent();
+            theme.Apply(this);
+            ApplyEditorTheme();
+            HandleCreated += (s, e) => theme.ApplyTitleBar(this);
             LoadSequence(sequence);
         }
 
@@ -162,6 +166,27 @@ namespace usbrelay
             };
             button.Click += click;
             return button;
+        }
+
+        private void ApplyEditorTheme()
+        {
+            editor.Background = WpfBrush(theme.Surface);
+            editor.Foreground = WpfBrush(theme.Foreground);
+            editor.LineNumbersForeground = WpfBrush(theme.Muted);
+            editor.TextArea.SelectionBrush = WpfBrush(theme.Selection);
+            editor.TextArea.SelectionForeground = WpfBrush(theme.Foreground);
+            if (theme.IsDark)
+            {
+                using (var stream = typeof(SequenceEditorForm).Assembly.GetManifestResourceStream("usbrelay.DarkSequence.xshd"))
+                using (var reader = System.Xml.XmlReader.Create(stream))
+                    editor.SyntaxHighlighting = ICSharpCode.AvalonEdit.Highlighting.Xshd.HighlightingLoader.Load(reader, HighlightingManager.Instance);
+            }
+            System.Diagnostics.Trace.WriteLine("[SequenceEditorForm] Applied editor dark=" + theme.IsDark);
+        }
+
+        private static System.Windows.Media.Brush WpfBrush(Color color)
+        {
+            return new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(color.R, color.G, color.B));
         }
 
         private void LoadSequence(SequenceDefinition sequence)
@@ -288,6 +313,10 @@ namespace usbrelay
                 completionWindow.Close();
 
             completionWindow = new CompletionWindow(editor.TextArea);
+            completionWindow.Background = WpfBrush(theme.Surface);
+            completionWindow.Foreground = WpfBrush(theme.Foreground);
+            completionWindow.CompletionList.Background = WpfBrush(theme.Surface);
+            completionWindow.CompletionList.Foreground = WpfBrush(theme.Foreground);
             completionWindow.StartOffset = result.ReplacementStart;
             completionWindow.Width = 360;
             completionWindow.MaxHeight = 320;

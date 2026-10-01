@@ -10,6 +10,8 @@ namespace usbrelay
 {
     public sealed class MainForm : Form
     {
+        private GuiTheme theme = new GuiTheme(ThemeSettings.Load(ThemeSettings.DefaultPath).Theme);
+        private ComboBox themeSelector;
         private readonly RelayService relayService;
         private readonly RelayNamingRepository relayNamingRepository;
         private readonly SequenceRepository sequenceRepository;
@@ -70,6 +72,8 @@ namespace usbrelay
             this.removeSequenceConfirmation = removeSequenceConfirmation ?? ConfirmRemoveSequence;
             this.sequenceConfirmation = sequenceConfirmation ?? ConfirmSequence;
             InitializeComponent();
+            theme.Apply(this);
+            HandleCreated += (s, e) => theme.ApplyTitleBar(this);
         }
 
         protected override void OnLoad(EventArgs e)
@@ -145,6 +149,13 @@ namespace usbrelay
             toolbar.Controls.Add(MiniButton("Add", (s, e) => AddSequence()));
             toolbar.Controls.Add(MiniButton("Edit", (s, e) => EditSequence()));
             toolbar.Controls.Add(MiniButton("Remove", (s, e) => RemoveSequence()));
+            toolbar.Controls.Add(new Label { Text = "Theme", AutoSize = true, Padding = new Padding(6, 6, 0, 0) });
+            themeSelector = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 76, AccessibleName = "GUI theme" };
+            themeSelector.Items.AddRange(new object[] { "Dark", "Light" });
+            themeSelector.SelectedIndex = theme.IsDark ? 0 : 1;
+            themeSelector.SelectedIndexChanged += (s, e) => ChangeTheme();
+            toolbar.Controls.Add(themeSelector);
+            toolbar.Controls.Add(MiniButton("AI tools", (s, e) => { using (var form = new IntegrationForm(theme)) form.ShowDialog(this); }));
             sequencePaneLayout.Controls.Add(toolbar, 0, 0);
 
             sequenceGrid = new DataGridView
@@ -262,14 +273,16 @@ namespace usbrelay
                 string value = (string)e.Value;
                 if (value.EndsWith("ON", StringComparison.Ordinal))
                 {
-                    e.CellStyle.ForeColor = Color.DarkGreen;
-                    e.CellStyle.BackColor = Color.Honeydew;
+                    e.CellStyle.ForeColor = theme.OnForeground;
+                    e.CellStyle.BackColor = theme.OnBackground;
                 }
                 else if (value.EndsWith("OFF", StringComparison.Ordinal))
                 {
-                    e.CellStyle.ForeColor = Color.DimGray;
-                    e.CellStyle.BackColor = Color.WhiteSmoke;
+                    e.CellStyle.ForeColor = theme.Muted;
+                    e.CellStyle.BackColor = theme.Surface;
                 }
+                e.CellStyle.SelectionForeColor = theme.IsDark ? e.CellStyle.ForeColor : SystemColors.HighlightText;
+                e.CellStyle.SelectionBackColor = theme.Selection;
             };
             devicePaneLayout.Controls.Add(statusGrid, 0, 3);
 
@@ -288,6 +301,25 @@ namespace usbrelay
             };
             button.Click += click;
             return button;
+        }
+
+        private void ChangeTheme()
+        {
+            string name = themeSelector.SelectedIndex == 0 ? "dark" : "light";
+            System.Diagnostics.Trace.WriteLine("[MainForm] Theme selected=" + name);
+            try
+            {
+                new ThemeSettings { Theme = name }.Save(ThemeSettings.DefaultPath);
+            }
+            catch (Exception ex)
+            {
+                AppendLog("Theme preference could not be saved: " + ex.Message);
+            }
+            theme = new GuiTheme(name);
+            theme.Apply(this);
+            theme.ApplyTitleBar(this);
+            RefreshDevices();
+            AppendLog("Theme changed to " + name);
         }
 
         private void ApplyDefaultSplitterDistance()
@@ -612,7 +644,7 @@ namespace usbrelay
                 var button = new Button
                 {
                     Text = "● " + device.GetChannelName(channel) + Environment.NewLine + (on ? "ON" : "OFF"),
-                    ForeColor = on ? Color.DarkGreen : Color.Firebrick,
+                    ForeColor = on ? theme.OnForeground : theme.OffForeground,
                     Width = 64,
                     Height = 42,
                     Margin = new Padding(2),
@@ -623,6 +655,9 @@ namespace usbrelay
             }
 
             group.Controls.Add(channels);
+            theme.Apply(group);
+            for (int index = 0; index < channels.Controls.Count; index++)
+                channels.Controls[index].ForeColor = device.IsChannelOn(index + 1) ? theme.OnForeground : theme.OffForeground;
             UpdateDeviceGroupSize(group);
             return group;
         }
@@ -752,8 +787,8 @@ namespace usbrelay
                 var runCell = row.Cells["RunColumn"];
                 runCell.Value = !parsed.IsValid ? "Invalid" : busy ? "Busy" : sequence.DisplayRunButtonText;
                 runCell.ReadOnly = !parsed.IsValid || busy;
-                runCell.Style.ForeColor = !parsed.IsValid || busy ? SystemColors.GrayText : SystemColors.ControlText;
-                runCell.Style.BackColor = !parsed.IsValid || busy ? SystemColors.Control : SystemColors.Window;
+                runCell.Style.ForeColor = !parsed.IsValid || busy ? theme.Muted : theme.Foreground;
+                runCell.Style.BackColor = !parsed.IsValid || busy ? theme.Background : theme.Surface;
             }
 
             foreach (Control group in devicesPanel.Controls)

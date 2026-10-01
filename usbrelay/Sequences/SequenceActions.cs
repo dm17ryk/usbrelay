@@ -34,6 +34,7 @@ namespace usbrelay.Sequences
 
         public void Execute(SequenceExecutionContext context)
         {
+            context.CancellationToken.ThrowIfCancellationRequested();
             if (string.IsNullOrEmpty(channelName))
                 context.Relay.SetChannel(serialNumber, channel, on);
             else
@@ -57,7 +58,10 @@ namespace usbrelay.Sequences
         {
             context.Log.Add("sleep " + milliseconds + " ms");
             if (!context.SkipDelays)
-                Thread.Sleep(milliseconds);
+            {
+                if (context.CancellationToken.WaitHandle.WaitOne(milliseconds))
+                    context.CancellationToken.ThrowIfCancellationRequested();
+            }
         }
     }
 
@@ -99,6 +103,7 @@ namespace usbrelay.Sequences
 
             while (DateTime.UtcNow <= deadline)
             {
+                context.CancellationToken.ThrowIfCancellationRequested();
                 bool isOn = string.IsNullOrEmpty(channelName)
                     ? context.Relay.GetChannelState(serialNumber, channel)
                     : context.Relay.GetChannelState(serialNumber, channelName);
@@ -111,7 +116,8 @@ namespace usbrelay.Sequences
                 if (context.SkipDelays)
                     break;
 
-                Thread.Sleep(50);
+                if (context.CancellationToken.WaitHandle.WaitOne(50))
+                    context.CancellationToken.ThrowIfCancellationRequested();
             }
 
             throw new InvalidOperationException("Timed out waiting for " + label + " " + expectedState);
@@ -237,6 +243,7 @@ namespace usbrelay.Sequences
 
             foreach (var action in matched ? successActions : failureActions)
             {
+                context.CancellationToken.ThrowIfCancellationRequested();
                 action.Execute(context);
                 if (context.ExitRequested)
                     return;
@@ -286,6 +293,7 @@ namespace usbrelay.Sequences
 
             foreach (var action in condition ? successActions : failureActions)
             {
+                context.CancellationToken.ThrowIfCancellationRequested();
                 action.Execute(context);
                 if (context.ExitRequested)
                     return;

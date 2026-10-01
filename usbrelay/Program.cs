@@ -18,6 +18,10 @@ namespace usbrelay
         [STAThread]
         static int Main(string[] args)
         {
+            // Keep inherited pipe handles intact: an MCP host launches this WinExe with
+            // redirected stdio, and attaching a console can replace those handles.
+            if (args.Length > 0 && args[0] == "mcp")
+                return UsbRelayCli.Run(args);
             bool hasInheritedConsole = ConsoleWindow.PrepareForStartup();
             if (SelectStartupMode(args, hasInheritedConsole) == StartupMode.Gui)
                 return RunGui();

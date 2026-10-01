@@ -59,6 +59,7 @@ Section "Install"
 
   SetOutPath "$INSTDIR\scripts"
   File "${REPO_ROOT}\scripts\usbrelay-completion.ps1"
+  File "${REPO_ROOT}\scripts\Get-McpConfig.ps1"
 
   SetOutPath "$INSTDIR\scripts\clink"
   File /r "${REPO_ROOT}\scripts\clink\*.*"

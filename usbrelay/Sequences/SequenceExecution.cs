@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text;
+using System.Threading;
 
 namespace usbrelay.Sequences
 {
@@ -36,13 +37,15 @@ namespace usbrelay.Sequences
             IExternalToolRunner toolRunner,
             bool skipDelays,
             Action actionCompleted,
-            Func<string, string, bool> confirmation = null)
+            Func<string, string, bool> confirmation = null,
+            CancellationToken cancellationToken = default(CancellationToken))
         {
             Relay = relay;
             ToolRunner = toolRunner;
             SkipDelays = skipDelays;
             ActionCompleted = actionCompleted;
             Confirmation = confirmation;
+            CancellationToken = cancellationToken;
             Log = new List<string>();
         }
 
@@ -51,6 +54,7 @@ namespace usbrelay.Sequences
         public bool SkipDelays { get; }
         public Action ActionCompleted { get; }
         public Func<string, string, bool> Confirmation { get; }
+        public CancellationToken CancellationToken { get; }
         public List<string> Log { get; }
         public ExternalToolResult LastToolResult { get; set; }
         public bool ExitRequested { get; private set; }
@@ -134,9 +138,10 @@ namespace usbrelay.Sequences
             IExternalToolRunner toolRunner,
             bool skipDelays = true,
             Action actionCompleted = null,
-            Func<string, string, bool> confirmation = null)
+            Func<string, string, bool> confirmation = null,
+            CancellationToken cancellationToken = default(CancellationToken))
         {
-            var context = new SequenceExecutionContext(relay, toolRunner, skipDelays, actionCompleted, confirmation);
+            var context = new SequenceExecutionContext(relay, toolRunner, skipDelays, actionCompleted, confirmation, cancellationToken);
 
             if (!sequence.IsValid)
                 return new SequenceRunResult(false, sequence.Diagnostics, new InvalidOperationException("Sequence is invalid."));
@@ -145,6 +150,7 @@ namespace usbrelay.Sequences
             {
                 foreach (var action in sequence.Actions)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     action.Execute(context);
                     if (context.ExitRequested)
                         return new SequenceRunResult(true, context.Log, null, exited: true);
@@ -164,8 +170,16 @@ namespace usbrelay.Sequences
 
     public sealed class ProcessExternalToolRunner : IExternalToolRunner
     {
+        private readonly CancellationToken cancellationToken;
+
+        public ProcessExternalToolRunner(CancellationToken cancellationToken = default(CancellationToken))
+        {
+            this.cancellationToken = cancellationToken;
+        }
+
         public ExternalToolResult Run(string path, string arguments)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var startInfo = new ProcessStartInfo(path, arguments)
             {
                 CreateNoWindow = true,
@@ -185,6 +199,14 @@ namespace usbrelay.Sequences
                 process.Start();
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
+                while (!process.WaitForExit(100))
+                {
+                    if (!cancellationToken.IsCancellationRequested) continue;
+                    Trace.WriteLine("[ProcessExternalToolRunner] Cancellation requested; stopping process=" + process.Id);
+                    try { process.Kill(); }
+                    catch (InvalidOperationException) { /* The process may have exited after the check. */ }
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
                 process.WaitForExit();
 
                 return new ExternalToolResult(process.ExitCode, output.ToString());

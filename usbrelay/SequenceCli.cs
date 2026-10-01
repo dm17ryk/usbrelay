@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using usbrelay.Sequences;
 
 namespace usbrelay
@@ -250,6 +251,28 @@ namespace usbrelay
             return Functions(startOnCleanLine: false);
         }
 
+        public int Remove(string name, bool startOnCleanLine = false)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                error.WriteLine("Sequence name is required. Use --name <name>.");
+                return 1;
+            }
+            List<SequenceDefinition> sequences;
+            if (!TryLoadSequences(out sequences)) return 1;
+            var matches = sequences.Where(sequence => string.Equals(sequence.Name, name.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
+            System.Diagnostics.Trace.WriteLine("[SequenceCli] Remove name=" + name + ", matches=" + matches.Length);
+            if (matches.Length != 1)
+            {
+                error.WriteLine(matches.Length == 0 ? "Sequence not found: " + name : "Duplicate sequence name: " + name);
+                return 1;
+            }
+            sequences.Remove(matches[0]);
+            repository.Save(sequences);
+            output.Write(PrefixCleanLine("Removed sequence: " + matches[0].Name + Environment.NewLine, startOnCleanLine));
+            return 0;
+        }
+
         public int Functions(bool startOnCleanLine)
         {
             output.Write(PrefixCleanLine(string.Join(Environment.NewLine, FunctionReference) + Environment.NewLine, startOnCleanLine));
@@ -318,7 +341,7 @@ namespace usbrelay
             return Run(name, startOnCleanLine: false);
         }
 
-        public int Run(string name, bool startOnCleanLine)
+        public int Run(string name, bool startOnCleanLine, CancellationToken cancellationToken = default(CancellationToken), Func<string, string, bool> confirmation = null)
         {
             if (string.IsNullOrWhiteSpace(name))
             {
@@ -344,7 +367,9 @@ namespace usbrelay
                 parsed,
                 new RelaySequenceBackend(relayService),
                 toolRunner,
-                skipDelays: false);
+                skipDelays: false,
+                confirmation: confirmation,
+                cancellationToken: cancellationToken);
 
             foreach (string line in result.Log)
                 output.WriteLine(line);

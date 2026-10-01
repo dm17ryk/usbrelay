@@ -76,6 +76,33 @@ namespace usbrelay
                 ExecuteWithTransientDeviceRetry(() => backend.SetChannel(GetDevice(selector), channel, on));
         }
 
+        public IReadOnlyList<string> AllOff(Action<string> log = null)
+        {
+            var errors = new List<string>();
+            foreach (RelayDevice device in EnumerateDevices())
+            {
+                for (int channel = 1; channel <= device.ChannelCount; channel++)
+                {
+                    string target = device.DisplayName + " [" + device.DevicePath + "] CH" + channel;
+                    try
+                    {
+                        Trace.WriteLine("[RelayService] AllOff switching " + target);
+                        SetChannel(device, channel, false);
+                        log?.Invoke(target + " -> OFF ok");
+                    }
+                    catch (Exception ex)
+                    {
+                        string message = target + " failed: " + ex.Message;
+                        Trace.WriteLine("[RelayService] AllOff " + message);
+                        errors.Add(message);
+                        log?.Invoke(message);
+                    }
+                }
+            }
+            Trace.WriteLine("[RelayService] AllOff completed; failures=" + errors.Count);
+            return errors;
+        }
+
         public void UpdateNames(string selector, string deviceName, IEnumerable<string> channelNamePairs)
         {
             lock (syncRoot)
@@ -104,11 +131,14 @@ namespace usbrelay
             {
                 string channelSelector = pairs[index].Trim();
                 string channelName = pairs[index + 1].Trim();
-                if (channelName.Length == 0)
-                    throw new InvalidOperationException("Channel name cannot be empty.");
-
                 int channel = device.ResolveChannel(channelSelector);
                 RelayChannelNaming existing = naming.Channels.FirstOrDefault(item => item.Channel == channel);
+                if (channelName.Length == 0)
+                {
+                    Trace.WriteLine("[RelayService] Clearing channel name; device=" + device.DevicePath + ", channel=" + channel);
+                    if (existing != null) naming.Channels.Remove(existing);
+                    continue;
+                }
                 if (existing == null)
                     naming.Channels.Add(new RelayChannelNaming { Channel = channel, Name = channelName });
                 else

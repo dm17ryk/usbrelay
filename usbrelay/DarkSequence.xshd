@@ -1,0 +1,15 @@
+<SyntaxDefinition name="USB Relay Dark" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Comment" foreground="#8CBF87" />
+  <Color name="String" foreground="#E9B997" />
+  <RuleSet>
+    <Span color="Comment" begin="//" />
+    <Span color="Comment" multiline="true" begin="/\*" end="\*/" />
+    <Span color="String">
+      <Begin>"</Begin><End>"</End>
+      <RuleSet><Span begin="\\" end="." /></RuleSet>
+    </Span>
+    <Keywords foreground="#8EC7F4"><Word>if</Word><Word>else</Word><Word>var</Word><Word>true</Word><Word>false</Word></Keywords>
+    <Keywords foreground="#7ED6CB"><Word>sequence</Word><Word>RelayState</Word></Keywords>
+    <Rule foreground="#C4DCA9">\b\d+\b</Rule>
+  </RuleSet>
+</SyntaxDefinition>
