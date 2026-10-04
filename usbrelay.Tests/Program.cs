@@ -35,6 +35,7 @@ namespace usbrelay.Tests
                 IntegrationFeatureTests.Run,
                 IntegrationSetupTests.Run,
                 GuiMenuFeatureTests.Run,
+                UpdateFeatureTests.Run,
                 SequenceRepository_RoundTripsSequencesAsJson,
                 SequenceParser_ParsesDslAndResources,
                 SequenceParser_ParsesNamedDeviceAndChannel,
@@ -128,7 +129,12 @@ namespace usbrelay.Tests
 
             foreach (var test in tests)
             {
-                test();
+                try { test(); }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine("FAIL " + test.Method.Name + ": " + ex);
+                    return 1;
+                }
                 Console.WriteLine("PASS " + test.Method.Name);
             }
 

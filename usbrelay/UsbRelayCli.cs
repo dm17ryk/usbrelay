@@ -8,6 +8,8 @@ namespace usbrelay
     {
         public static int Run(string[] args)
         {
+            if (args.Length > 0 && args[0] == "update")
+                return UpdateCommand.Run(args);
             if (IsCompletionRequest(args))
                 return RunCompletion(args);
 
@@ -324,6 +326,7 @@ namespace usbrelay
             Console.WriteLine("  usbrelay --status");
             Console.WriteLine("  usbrelay --all-off");
             Console.WriteLine("  usbrelay theme dark");
+            Console.WriteLine("  usbrelay update check | usbrelay update auto on|off");
             Console.WriteLine("  usbrelay mcp");
             Console.WriteLine("  usbrelay integration install --client codex claude-code");
             Console.WriteLine("  usbrelay sequence remove --name \"Power cycle DUT\"");

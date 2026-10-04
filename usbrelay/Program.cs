@@ -18,6 +18,8 @@ namespace usbrelay
         [STAThread]
         static int Main(string[] args)
         {
+            if (args.Length > 0 && args[0] == "--apply-update")
+                return UpdateLauncher.Apply(args);
             // Keep inherited pipe handles intact: an MCP host launches this WinExe with
             // redirected stdio, and attaching a console can replace those handles.
             if (args.Length > 0 && args[0] == "mcp")

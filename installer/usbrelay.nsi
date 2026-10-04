@@ -24,11 +24,12 @@ RequestExecutionLevel admin
 !define APP_PUBLISHER "Min Xie (minxie.dallas@gmail.com)"
 !define APP_EXE "usbrelay.exe"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\usbrelay"
+!include "InstallDirectory.nsh"
 
 Name "${APP_NAME}"
 OutFile "${OUTPUT_DIR}\usbrelay-setup-v${VERSION}.exe"
 InstallDir "$PROGRAMFILES\usbrelay"
-InstallDirRegKey HKLM "${UNINSTALL_KEY}" "InstallLocation"
+AllowSkipFiles off
 
 !define MUI_ABORTWARNING
 !insertmacro MUI_PAGE_WELCOME
@@ -40,17 +41,19 @@ InstallDirRegKey HKLM "${UNINSTALL_KEY}" "InstallLocation"
 !insertmacro MUI_LANGUAGE "English"
 
 Function .onInit
-  ${If} ${RunningX64}
-    SetRegView 64
-    StrCpy $INSTDIR "$PROGRAMFILES64\usbrelay"
-  ${Else}
-    StrCpy $INSTDIR "$PROGRAMFILES\usbrelay"
-  ${EndIf}
+  Call ResolveInstallDirectory
 FunctionEnd
 
 Section "Install"
+  DetailPrint "[Installer] Installing ${VERSION} to $INSTDIR"
+  ClearErrors
   SetOutPath "$INSTDIR"
   File "${APP_OUTPUT_DIR}\${APP_EXE}"
+  ${If} ${Errors}
+    DetailPrint "[Installer] Failed to replace $INSTDIR\${APP_EXE}; close all USB Relay processes."
+    SetErrorLevel 1
+    Abort "Cannot replace usbrelay.exe. Close all USB Relay processes and try again."
+  ${EndIf}
   File /nonfatal "${APP_OUTPUT_DIR}\${APP_EXE}.config"
   File "${REPO_ROOT}\README.md"
 
@@ -66,6 +69,11 @@ Section "Install"
 
   SetOutPath "$INSTDIR"
   WriteUninstaller "$INSTDIR\uninstall.exe"
+  ${If} ${Errors}
+    DetailPrint "[Installer] Failed to extract installation files or write uninstaller."
+    SetErrorLevel 1
+    Abort "Could not write all installation files."
+  ${EndIf}
 
   CreateDirectory "$SMPROGRAMS\${APP_NAME}"
   CreateShortCut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"

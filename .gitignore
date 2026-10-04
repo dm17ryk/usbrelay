@@ -13,3 +13,5 @@
 /.codegraph
 /.superpowers
 /artifacts/release
+/artifacts/installer-tests
+/artifacts/*.log
