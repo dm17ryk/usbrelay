@@ -33,6 +33,7 @@ AllowSkipFiles off
 
 !define MUI_ABORTWARNING
 !insertmacro MUI_PAGE_WELCOME
+!define MUI_DIRECTORYPAGE_TEXT_TOP "Setup will install ${APP_NAME} in the following folder. Running USB Relay processes in this folder will be stopped when installation starts. Click Browse to choose another folder."
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
@@ -45,6 +46,11 @@ Function .onInit
 FunctionEnd
 
 Section "Install"
+  Call StopInstallationProcesses
+  ${If} ${Errors}
+    SetErrorLevel 1
+    Abort "Could not stop running USB Relay processes. Close them and try again. See $InstallerLogPath."
+  ${EndIf}
   DetailPrint "[Installer] Installing ${VERSION} to $INSTDIR"
   ClearErrors
   SetOutPath "$INSTDIR"

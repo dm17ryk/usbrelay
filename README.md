@@ -65,7 +65,9 @@ NEWBN_2=0
 
 # binary release
 
-The Windows installer reuses the registered installation folder on upgrades, including custom locations such as `C:\Essence_SC\usbrelay`. The directory page still allows choosing another folder. An explicit `/D=<absolute folder>` overrides the saved location; NSIS requires it to be the last argument and unquoted, even if the path contains spaces.
+The Windows installer detects the folder of a running `usbrelay.exe` before consulting the registered installation folder, including custom locations such as `C:\Essence_SC\usbrelay`. Multiple GUI, CLI, or MCP processes in the same folder count as one installation. If processes run from different folders, the installer keeps the registered location and lets you choose on the directory page. An explicit `/D=<absolute folder>` overrides automatic detection; NSIS requires it to be the last argument and unquoted, even if the path contains spaces.
+
+When installation starts, setup terminates USB Relay processes in the selected folder, waits for them to exit, and verifies that they released the executable before replacing files. Processes in other folders remain running. Folder detection and process shutdown diagnostics are saved to `%TEMP%\usbrelay-installer-<PID>.log`.
 
 The GUI checks the latest stable [GitHub release](https://github.com/dm17ryk/usbrelay/releases/latest) on startup when the previous check is at least 24 hours old, and while the application remains open. Use **Help > Check for updates** to check immediately, or **Help > Automatically check for updates** to disable automatic checks. The preference is saved in `%APPDATA%\usbrelay\updates.json`.
 
