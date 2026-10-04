@@ -13,12 +13,19 @@ SilentInstall silent
   !define UNINSTALL_KEY "Software\Classes\CLSID\{ECD27471-CC17-4ADC-B2F6-A44F78A21B73}"
 !endif
 !include "..\InstallDirectory.nsh"
+!include "TestPrivileges.nsh"
 Name "USB Relay installer directory regression"
 OutFile "${TEST_OUTPUT}\directory-test.exe"
 InstallDir "$PROGRAMFILES\usbrelay"
 
 Function .onInit
+  Call DisableTestDebugPrivilege
   Call ResolveInstallDirectory
+  !insertmacro InstallerLog "[Harness] $TestDebugPrivilegeStatus"
+  ${If} $TestDebugPrivilegeFailed != 0
+    SetErrorLevel 2
+    Quit
+  ${EndIf}
 FunctionEnd
 
 Section

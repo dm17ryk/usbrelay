@@ -79,11 +79,19 @@ function Show-HarnessLog($process) {
         Write-Host "INFO Installer harness did not create a diagnostic log."
     }
 }
-function Assert-Location([string]$expected, [string]$arguments = "/S") {
+function Assert-HarnessDiagnostic($process, [string]$expected) {
+    $logPath = Join-Path ([IO.Path]::GetTempPath()) "usbrelay-installer-$($process.Id).log"
+    if (!(Test-Path -LiteralPath $logPath) -or !([IO.File]::ReadAllText($logPath).Contains($expected))) {
+        Show-HarnessLog $process
+        throw "Expected installer diagnostic '$expected'."
+    }
+}
+function Assert-Location([string]$expected, [string]$arguments = "/S", [string]$requiredDiagnostic = "") {
     $process = Start-Process -FilePath (Join-Path $OutputDirectory "directory-test.exe") -ArgumentList $arguments -WindowStyle Hidden -PassThru -Wait
     if ($process.ExitCode -ne 0) { Show-HarnessLog $process; throw "Harness failed: $($process.ExitCode)" }
     $actual = [IO.File]::ReadAllText((Join-Path $OutputDirectory "resolved.txt"))
     if ($actual -ne $expected) { Show-HarnessLog $process; throw "Expected '$expected', got '$actual'" }
+    if ($requiredDiagnostic) { Assert-HarnessDiagnostic $process $requiredDiagnostic }
     Write-Host "PASS Installer folder: $actual"
 }
 $existing32 = $base32.OpenSubKey($testKey)
@@ -126,7 +134,7 @@ try {
     $activeProcess = Start-TestApplication $activeDirectory -Existing
     $unknownProcess = Start-TestApplication $otherDirectory -Existing
     $unknownHandle = Deny-TestProcessAccess $unknownProcess 0x1000
-    Assert-Location (Join-Path $env:ProgramFiles "usbrelay")
+    Assert-Location (Join-Path $env:ProgramFiles "usbrelay") "/S" "Cannot open PID=$($unknownProcess.Id), Win32 error=5"
     Write-Host "PASS Unresolved running process prevents assuming a unique installation folder."
     Stop-ProtectedFixture $unknownHandle
     $activeProcess.Kill()
@@ -136,7 +144,8 @@ try {
     $blockedSetup = Start-Process -FilePath (Join-Path $OutputDirectory "directory-test.exe") -ArgumentList "/S /STOP /D=$activeDirectory" -WindowStyle Hidden -PassThru -Wait
     Write-Host "INFO Termination-denied fixture PID=$($protectedTarget.Id), exited=$($protectedTarget.HasExited)"
     Show-HarnessLog $blockedSetup
-    if ($blockedSetup.ExitCode -eq 0 -or $protectedTarget.HasExited) { throw "Setup must fail if a selected process cannot be terminated." }
+    if ($blockedSetup.ExitCode -ne 1 -or $protectedTarget.HasExited) { throw "Setup must fail if a selected process cannot be terminated." }
+    Assert-HarnessDiagnostic $blockedSetup "Cannot stop selected PID=$($protectedTarget.Id), Win32 error=5"
     Write-Host "PASS Installer fails when selected process cannot be terminated."
     Stop-ProtectedFixture $targetHandle
     if ([Environment]::Is64BitOperatingSystem) {
