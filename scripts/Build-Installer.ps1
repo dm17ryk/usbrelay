@@ -163,5 +163,9 @@ if (-not (Test-Path -LiteralPath $installerPath)) {
     throw "Installer was not created: $installerPath"
 }
 
+if ($RunTests) {
+    & (Join-Path $PSScriptRoot "Test-InstallerDirectory.ps1") -MakeNsisPath $resolvedMakeNsis
+}
+
 Write-Host "Portable package: $zipPath"
 Write-Host "Installer: $installerPath"

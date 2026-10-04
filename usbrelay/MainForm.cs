@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using usbrelay.Sequences;
@@ -42,9 +43,21 @@ namespace usbrelay
         private SequenceDefinition selectedSequence;
         private bool loaded;
         private bool defaultSplitterApplied;
+        private readonly bool enableAutomaticUpdates;
+        private readonly CancellationTokenSource updateCancellation = new CancellationTokenSource();
+        private ToolStripMenuItem checkUpdatesMenuItem;
+        private ToolStripMenuItem automaticUpdatesMenuItem;
+        private bool checkingUpdates;
+        private bool installingUpdate;
+        private System.Windows.Forms.Timer updateTimer;
+        private AvailableUpdate pendingUpdate;
+        private bool pendingUpdateIsManual;
+        private readonly string updateSettingsPath;
+        private readonly Func<IUpdateService> updateServiceFactory;
+        private readonly Func<AvailableUpdate, bool> updateConfirmation;
 
         public MainForm()
-            : this(new NativeUsbRelayBackend(), new SequenceRepository(SequenceRepository.DefaultPath), MainLayoutSettings.DefaultPath)
+            : this(new NativeUsbRelayBackend(), new SequenceRepository(SequenceRepository.DefaultPath), MainLayoutSettings.DefaultPath, null, null, null, true)
         {
         }
 
@@ -73,8 +86,16 @@ namespace usbrelay
             string layoutSettingsPath,
             Func<SequenceDefinition, bool> removeSequenceConfirmation,
             Func<string, string, bool> sequenceConfirmation,
-            string themeSettingsPath = null)
+            string themeSettingsPath = null,
+            bool enableAutomaticUpdates = false,
+            string updateSettingsPath = null,
+            Func<IUpdateService> updateServiceFactory = null,
+            Func<AvailableUpdate, bool> updateConfirmation = null)
         {
+            this.updateSettingsPath = updateSettingsPath ?? UpdateSettings.DefaultPath;
+            this.updateServiceFactory = updateServiceFactory ?? (() => new GitHubUpdateService());
+            this.updateConfirmation = updateConfirmation ?? ConfirmUpdate;
+            this.enableAutomaticUpdates = enableAutomaticUpdates;
             this.themeSettingsPath = themeSettingsPath ?? ThemeSettings.DefaultPath;
             theme = new GuiTheme(ThemeSettings.Load(this.themeSettingsPath).Theme);
             this.relayNamingRepository = new RelayNamingRepository(RelayNamingRepository.DefaultPath);
@@ -111,12 +132,34 @@ namespace usbrelay
             ApplyDefaultSplitterDistance();
             ResizeDeviceRows();
             UpdateBusyState();
+            if (enableAutomaticUpdates && updateTimer == null)
+            {
+                updateTimer = new System.Windows.Forms.Timer { Interval = 60 * 60 * 1000 };
+                updateTimer.Tick += (sender, args) => CheckForUpdates(false);
+                updateTimer.Start();
+                BeginInvoke(new Action(() => CheckForUpdates(false)));
+            }
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             SaveLayoutSettings();
             base.OnFormClosing(e);
+            if (!e.Cancel)
+            {
+                updateCancellation.Cancel();
+                updateTimer?.Stop();
+            }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                updateCancellation.Cancel();
+                updateTimer?.Dispose();
+            }
+            base.Dispose(disposing);
         }
 
         private void InitializeComponent()
@@ -178,6 +221,12 @@ namespace usbrelay
                 using (var form = new IntegrationForm(theme)) form.ShowDialog(this);
             }));
             var helpMenu = new ToolStripMenuItem("&Help");
+            checkUpdatesMenuItem = MenuAction("Check for &updates...", "checkUpdatesMenuItem", () => CheckForUpdates(true));
+            automaticUpdatesMenuItem = MenuAction("&Automatically check for updates", "automaticUpdatesMenuItem", ToggleAutomaticUpdates);
+            automaticUpdatesMenuItem.Checked = UpdateSettings.Load(updateSettingsPath).AutomaticChecks;
+            helpMenu.DropDownItems.Add(checkUpdatesMenuItem);
+            helpMenu.DropDownItems.Add(automaticUpdatesMenuItem);
+            helpMenu.DropDownItems.Add(new ToolStripSeparator());
             helpMenu.DropDownItems.Add(MenuAction("&Quick start...", "helpMenuItem", () =>
             {
                 using (var form = new HelpForm(theme)) form.ShowDialog(this);
@@ -202,6 +251,131 @@ namespace usbrelay
                 action();
             };
             return item;
+        }
+
+        private void ToggleAutomaticUpdates()
+        {
+            try
+            {
+                var settings = UpdateSettings.Load(updateSettingsPath);
+                settings.AutomaticChecks = !automaticUpdatesMenuItem.Checked;
+                settings.Save(updateSettingsPath);
+                automaticUpdatesMenuItem.Checked = settings.AutomaticChecks;
+                AppendLog("Automatic update checks " + (settings.AutomaticChecks ? "enabled" : "disabled"));
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.WriteLine("[Updater] Could not save automatic check preference: " + ex);
+                AppendLog("Could not save update preference: " + ex.Message);
+            }
+        }
+
+        private async void CheckForUpdates(bool manual)
+        {
+            await CheckForUpdatesAsync(manual);
+        }
+
+        private async Task CheckForUpdatesAsync(bool manual)
+        {
+            if (checkingUpdates || installingUpdate || IsDisposed || Disposing || updateCancellation.IsCancellationRequested)
+            {
+                System.Diagnostics.Trace.WriteLine("[Updater] Check skipped; already checking, installing, or closing.");
+                return;
+            }
+            checkingUpdates = true;
+            UpdateBusyState();
+            try
+            {
+                var settings = UpdateSettings.Load(updateSettingsPath);
+                if (!manual && !settings.AutomaticChecks && !pendingUpdateIsManual) return;
+                if (!manual && pendingUpdate == null && !settings.IsCheckDue(DateTime.UtcNow))
+                {
+                    System.Diagnostics.Trace.WriteLine("[Updater] Daily check is not due; last=" + settings.LastCheckUtc.ToString("O"));
+                    return;
+                }
+                using (var service = updateServiceFactory())
+                {
+                    AvailableUpdate update = pendingUpdate;
+                    if (update == null)
+                    {
+                        settings.LastCheckUtc = DateTime.UtcNow;
+                        settings.Save(updateSettingsPath);
+                        AppendLog("Checking GitHub for updates...");
+                        update = await service.CheckAsync(updateCancellation.Token);
+                    }
+                    if (IsDisposed || Disposing || updateCancellation.IsCancellationRequested) return;
+                    if (update == null)
+                    {
+                        AppendLog("USB Relay Control is up to date (" + GitHubUpdateService.CurrentVersion + ").");
+                        if (manual) MessageBox.Show(this, "USB Relay Control is up to date.", "Updates", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        return;
+                    }
+                    pendingUpdate = update;
+                    pendingUpdateIsManual = manual || pendingUpdateIsManual;
+                    AppendLog("Update available: " + update.Version);
+                    if (runningSequences.Count > 0)
+                    {
+                        AppendLog("Update postponed until running sequences finish.");
+                        return;
+                    }
+                    bool accepted = updateConfirmation(update);
+                    pendingUpdate = null;
+                    pendingUpdateIsManual = false;
+                    if (!accepted)
+                    {
+                        System.Diagnostics.Trace.WriteLine("[Updater] User postponed update=" + update.Version);
+                        return;
+                    }
+                    installingUpdate = true;
+                    AppendLog("Downloading and verifying update " + update.Version + "...");
+                    string installer = await service.DownloadAsync(update, GitHubUpdateService.StagingRoot, updateCancellation.Token);
+                    if (IsDisposed || Disposing || updateCancellation.IsCancellationRequested) return;
+                    if (runningSequences.Count > 0)
+                    {
+                        AppendLog("Update postponed: a sequence started during download.");
+                        pendingUpdate = update;
+                        pendingUpdateIsManual = manual;
+                        return;
+                    }
+                    UpdateLauncher.Start(installer, update.Sha256, Application.ExecutablePath);
+                    AppendLog("Installer verified. Closing for update...");
+                    Close();
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                System.Diagnostics.Trace.WriteLine("[Updater] Update check/download cancelled or timed out.");
+                if (!IsDisposed && !Disposing && !updateCancellation.IsCancellationRequested)
+                {
+                    AppendLog("Update request timed out. Try Help > Check for updates again.");
+                    if (manual) MessageBox.Show(this, "The update request timed out. Please try again.", "Updates");
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.WriteLine("[Updater] Check/install preparation failed: " + ex);
+                if (!IsDisposed && !Disposing && !updateCancellation.IsCancellationRequested)
+                {
+                    AppendLog("Update failed: " + ex.Message);
+                    if (manual) MessageBox.Show(this, ex.Message, "Update failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+            finally
+            {
+                checkingUpdates = false;
+                installingUpdate = false;
+                if (!IsDisposed && !Disposing) UpdateBusyState();
+            }
+        }
+
+        private bool ConfirmUpdate(AvailableUpdate update)
+        {
+            return MessageBox.Show(this,
+                "USB Relay Control " + update.Version + " is available.\n\nDownload and install it in:\n"
+                + System.IO.Path.GetDirectoryName(Application.ExecutablePath)
+                + "\n\nThe application will close and reopen. Windows will ask for administrator permission.",
+                "Update available", MessageBoxButtons.YesNo, MessageBoxIcon.Information,
+                MessageBoxDefaultButton.Button2) == DialogResult.Yes;
         }
 
         private void UpdateSequenceMenuState()
@@ -570,6 +744,11 @@ namespace usbrelay
 
         private async void RunSequence(SequenceDefinition sequence)
         {
+            if (installingUpdate)
+            {
+                AppendLog("Cannot run a sequence while an update is being installed.");
+                return;
+            }
             var parsed = sequenceParseCache.Get(sequence);
             if (!parsed.IsValid)
             {
@@ -619,6 +798,7 @@ namespace usbrelay
                     AppendLog("released " + sequence.Name);
                     RefreshDevices();
                     UpdateBusyState();
+                    if (pendingUpdate != null && runningSequences.Count == 0) CheckForUpdates(false);
                 }
             }
         }
@@ -949,6 +1129,7 @@ namespace usbrelay
 
         private void UpdateBusyState()
         {
+            if (checkUpdatesMenuItem != null) checkUpdatesMenuItem.Enabled = !checkingUpdates && !installingUpdate;
             foreach (DataGridViewRow row in sequenceGrid.Rows)
             {
                 var sequence = row.Tag as SequenceDefinition;

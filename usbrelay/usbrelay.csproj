@@ -217,6 +217,10 @@
     <Compile Include="IRelayBackend.cs" />
     <Compile Include="MainLayoutSettings.cs" />
     <Compile Include="MainForm.cs" />
+    <Compile Include="GitHubUpdateService.cs" />
+    <Compile Include="UpdateSettings.cs" />
+    <Compile Include="UpdateLauncher.cs" />
+    <Compile Include="UpdateCommand.cs" />
     <Compile Include="DeviceNamingForm.cs" />
     <Compile Include="NativeUsbRelayBackend.cs" />
     <Compile Include="Operations.cs" />

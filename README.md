@@ -65,6 +65,14 @@ NEWBN_2=0
 
 # binary release
 
+The Windows installer reuses the registered installation folder on upgrades, including custom locations such as `C:\Essence_SC\usbrelay`. The directory page still allows choosing another folder. An explicit `/D=<absolute folder>` overrides the saved location; NSIS requires it to be the last argument and unquoted, even if the path contains spaces.
+
+The GUI checks the latest stable [GitHub release](https://github.com/dm17ryk/usbrelay/releases/latest) on startup when the previous check is at least 24 hours old, and while the application remains open. Use **Help > Check for updates** to check immediately, or **Help > Automatically check for updates** to disable automatic checks. The preference is saved in `%APPDATA%\usbrelay\updates.json`.
+
+When a newer release is available, the app asks before downloading and installing. It verifies the release asset size and GitHub SHA-256 digest, waits for running sequences to finish, closes the app, and runs the installer with Windows administrator permission. The updater passes the running executable's folder explicitly, preserving custom or moved installations, then reopens the app as the current user. Downloads and installer logs are under `%LOCALAPPDATA%\usbrelay\updates`. If installation is cancelled or fails, the helper reports the error and reopens the app.
+
+CLI commands: `usbrelay update check`, `usbrelay update auto on`, and `usbrelay update auto off`. CLI and MCP startup do not perform background update checks.
+
 [Version 1.0.0.5](https://github.com/dm17ryk/usbrelay/releases/tag/v1.0.0.5) - installer and portable zip are built by GitHub Actions.
 
 [Version 1.0.0.3](https://github.com/mxcoppell/usbrelay/releases/tag/1.0.0.3) - [usbrelay-v1.0.0.3.zip](https://github.com/mxcoppell/usbrelay/releases/download/1.0.0.3/usbrelay-v1.0.0.3.zip)
